@@ -24,7 +24,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/internal/auth"
 	"github.com/minio/minio/internal/disk"
 	"net/http"
 	"net/url"
@@ -65,11 +64,6 @@ func ExposedParseSignV4(v4auth string) (string, error) {
 // ExposedWriteErrorResponse writes an error code in proper XML foramt
 func ExposedWriteErrorResponse(ctx context.Context, w http.ResponseWriter, code APIErrorCode, reqURL *url.URL) {
 	writeErrorResponse(ctx, w, errorCodes.ToAPIErr(code), reqURL)
-}
-
-// ExposedStoreTmpUserToIAMSys stores an idToken as valid accessKey in the globalIAMSys
-func ExposedStoreTmpUserToIAMSys(idToken string) error {
-	return globalIAMSys.SetTempUser(idToken, auth.Credentials{}, "")
 }
 
 // ExposedDiskStats returns info about the disk

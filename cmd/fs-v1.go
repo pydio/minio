@@ -20,6 +20,8 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -35,7 +37,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
-	"github.com/minio/madmin-go"
+	madmin "github.com/minio/madmin-go"
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/tags"
 	"github.com/minio/minio/internal/color"
@@ -643,6 +645,26 @@ func (fs *FSObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 		}
 		// This close will allow for locks to be synchronized on `fs.json`.
 		defer wlk.Close()
+
+		// Pydio Mod : Recompute eTag if not set or multipart etag
+		if srcInfo.ETag == "" || strings.Contains(srcInfo.ETag, "-") {
+			fsObjPath := pathJoin(fs.fsPath, srcBucket, srcObject)
+			reader, size, err := fsOpenFile(ctx, fsObjPath, 0)
+			if err != nil {
+				return oi, toObjectErr(err, srcBucket, srcObject)
+			}
+			defer reader.Close()
+			bufSize := int64(blockSizeV2)
+			if size > 0 && bufSize > size {
+				bufSize = size
+			}
+			buf := make([]byte, int(bufSize))
+			md5Writer := md5.New()
+			io.CopyBuffer(md5Writer, reader, buf)
+			srcInfo.ETag = hex.EncodeToString(md5Writer.Sum(nil))
+			//fmt.Println("New eTag is now", srcInfo.ETag)
+
+		}
 
 		// Save objects' metadata in `fs.json`.
 		fsMeta := newFSMetaV1()
