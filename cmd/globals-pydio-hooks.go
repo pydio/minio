@@ -29,6 +29,20 @@ import (
 	"net/url"
 )
 
+const (
+	ErrPydioQuotaExceeded = APIErrorCode(1422)
+)
+
+type PydioQuotaExceeded GenericError
+
+func (e PydioQuotaExceeded) Error() string {
+	return "Quota exceeded for bucket: " + e.Bucket
+}
+
+func init() {
+	errorCodes[ErrPydioQuotaExceeded] = APIError{Code: "QuotaExceeded", Description: "You have reached your authorized quota", HTTPStatusCode: 422}
+}
+
 type ReqParamExtractor func(req *http.Request, m map[string]string)
 
 var (
