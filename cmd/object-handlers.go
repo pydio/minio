@@ -945,7 +945,8 @@ func (api objectAPIHandlers) CopyObjectHandler(w http.ResponseWriter, r *http.Re
 	}
 
 	// Read escaped copy source path to check for parameters.
-	cpSrcPath := r.Header.Get(xhttp.AmzCopySource)
+	// PYDIO : WE FORCE UNESCAPING OR ?versionId is NOT properly detected here
+	cpSrcPath, _ := url.QueryUnescape(r.Header.Get(xhttp.AmzCopySource))
 	var vid string
 	if u, err := url.Parse(cpSrcPath); err == nil {
 		vid = strings.TrimSpace(u.Query().Get(xhttp.VersionID))
