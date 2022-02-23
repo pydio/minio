@@ -1308,6 +1308,11 @@ func NewNotificationSys(endpoints EndpointServerPools) *NotificationSys {
 func GetPeerOnlineCount() (nodesOnline, nodesOffline int) {
 	nodesOnline = 1 // Self is always online.
 	nodesOffline = 0
+	// PYDIO TEAM FIX - globalNotificationSys may not yet be initialized
+	// on first prom calls
+	if globalNotificationSys == nil {
+		return
+	}
 	servers := globalNotificationSys.ServerInfo()
 	for _, s := range servers {
 		if s.State == string(madmin.ItemOnline) {
