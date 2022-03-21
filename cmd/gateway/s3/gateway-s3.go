@@ -815,3 +815,11 @@ func (l *s3Objects) IsEncryptionSupported() bool {
 func (l *s3Objects) IsTaggingSupported() bool {
 	return true
 }
+
+func (l *s3Objects) IsNotificationSupported() bool {
+	return true
+}
+
+func (l *s3Objects) IsListenSupported() bool {
+	return true
+}
