@@ -75,6 +75,16 @@ func ExposedParseSignV4(v4auth string) (string, error) {
 	}
 }
 
+// ExposedParsePresignV4 parses a presigned v4 signature and return the signature accessKey if it's valid.
+func ExposedParsePresignV4(query url.Values) (string, error) {
+	val, code := parsePreSignV4(query, globalSite.Region, "s3")
+	if code != ErrNone {
+		return "", fmt.Errorf("cannot parse signature - code is %d", code)
+	} else {
+		return val.Credential.accessKey, nil
+	}
+}
+
 // ExposedWriteErrorResponse writes an error code in proper XML foramt
 func ExposedWriteErrorResponse(ctx context.Context, w http.ResponseWriter, code APIErrorCode, reqURL *url.URL) {
 	writeErrorResponse(ctx, w, errorCodes.ToAPIErr(code), reqURL)
