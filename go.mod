@@ -10,7 +10,7 @@ require (
 	github.com/alecthomas/participle v0.2.1
 	github.com/bcicen/jstream v1.0.1
 	github.com/beevik/ntp v0.3.0
-	github.com/cespare/xxhash/v2 v2.1.1
+	github.com/cespare/xxhash/v2 v2.1.2
 	github.com/cheggaaa/pb v1.0.29
 	github.com/colinmarc/hdfs/v2 v2.2.0
 	github.com/dchest/siphash v1.2.1
@@ -28,7 +28,7 @@ require (
 	github.com/gorilla/mux v1.8.0
 	github.com/hashicorp/vault/api v1.0.4
 	github.com/jcmturner/gokrb5/v8 v8.4.2
-	github.com/json-iterator/go v1.1.11
+	github.com/json-iterator/go v1.1.12
 	github.com/klauspost/compress v1.13.5
 	github.com/klauspost/cpuid/v2 v2.0.4
 	github.com/klauspost/pgzip v1.2.5
@@ -54,9 +54,9 @@ require (
 	github.com/philhofer/fwd v1.1.1
 	github.com/pierrec/lz4 v2.5.2+incompatible
 	github.com/pkg/errors v0.9.1
-	github.com/prometheus/client_golang v1.11.0
-	github.com/prometheus/client_model v0.2.0
-	github.com/prometheus/procfs v0.6.0
+	github.com/prometheus/client_golang v1.14.0
+	github.com/prometheus/client_model v0.3.0
+	github.com/prometheus/procfs v0.8.0
 	github.com/rjeczalik/notify v0.9.2
 	github.com/rs/cors v1.7.0
 	github.com/secure-io/sio-go v0.3.1
@@ -74,9 +74,9 @@ require (
 	go.etcd.io/etcd/api/v3 v3.5.0
 	go.etcd.io/etcd/client/v3 v3.5.0
 	go.uber.org/zap v1.17.0
-	golang.org/x/crypto v0.0.0-20210220033148-5ea612d1eb83
-	golang.org/x/net v0.0.0-20220624214902-1bab6f366d9e
-	golang.org/x/sys v0.0.0-20220624220833-87e55d714810
+	golang.org/x/crypto v0.6.0
+	golang.org/x/net v0.7.0
+	golang.org/x/sys v0.5.0
 	google.golang.org/api v0.88.0
-	gopkg.in/yaml.v2 v2.3.0
+	gopkg.in/yaml.v2 v2.4.0
 )
