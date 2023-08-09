@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 /*
@@ -104,9 +105,13 @@ func (mts mountInfos) checkCrossMounts(path string) error {
 			}
 		}
 	}
-	msg := `Cross-device mounts detected on path (%s) at following locations %s. Export path should not have any sub-mounts, refusing to start.`
+	msg := `Cross-device mounts detected on path (%s) at following locations %s. Export path should not have any sub-mounts, refusing to start. Use CELLS_MINIO_ALLOW_CROSSMOUNT=true if you want to force start.`
 	if len(crossMounts) > 0 {
 		// if paths didn't match then we do have cross-device mount.
+		if os.Getenv("CELLS_MINIO_ALLOW_CROSSMOUNT") != "" {
+			fmt.Printf(`Cross-device mounts detected on path (%s) at following locations %s. Export path should not have any sub-mounts, but starting as CELLS_MINIO_ALLOW_CROSSMOUNT is set.\n`, path, crossMounts)
+			return nil
+		}
 		return fmt.Errorf(msg, path, crossMounts)
 	}
 	return nil

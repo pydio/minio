@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path"
 )
@@ -143,7 +144,12 @@ func renameAll(srcFilePath, dstFilePath string) (err error) {
 			// directory" error message. Handle this specifically here.
 			return errFileAccessDenied
 		case isSysErrCrossDevice(err):
-			return fmt.Errorf("%w (%s)->(%s)", errCrossDeviceLink, srcFilePath, dstFilePath)
+			if os.Getenv("CELLS_MINIO_ALLOW_CROSSMOUNT") != "" {
+				fmt.Printf("[WARNING] %v (%s)->(%s)\n", errCrossDeviceLink, srcFilePath, dstFilePath)
+				return crossDeviceRename(srcFilePath, dstFilePath)
+			} else {
+				return fmt.Errorf("%w (%s)->(%s)", errCrossDeviceLink, srcFilePath, dstFilePath)
+			}
 		case osIsNotExist(err):
 			return errFileNotFound
 		case osIsExist(err):
@@ -176,4 +182,28 @@ func reliableRename(srcFilePath, dstFilePath string) (err error) {
 		break
 	}
 	return err
+}
+
+func crossDeviceRename(sourcePath, destPath string) error {
+	inputFile, err := os.Open(sourcePath)
+	if err != nil {
+		return fmt.Errorf("couldn't open source file: %s", err)
+	}
+	outputFile, err := os.Create(destPath)
+	if err != nil {
+		inputFile.Close()
+		return fmt.Errorf("couldn't open dest file: %s", err)
+	}
+	defer outputFile.Close()
+	_, err = io.Copy(outputFile, inputFile)
+	inputFile.Close()
+	if err != nil {
+		return fmt.Errorf("writing to output file failed: %s", err)
+	}
+	// The copy was successful, so now delete the original file
+	err = os.Remove(sourcePath)
+	if err != nil {
+		return fmt.Errorf("failed removing original file: %s", err)
+	}
+	return nil
 }
