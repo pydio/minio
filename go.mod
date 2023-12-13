@@ -16,7 +16,7 @@ require (
 	github.com/dchest/siphash v1.2.1
 	github.com/djherbis/atime v1.0.0
 	github.com/dswarbrick/smart v0.0.0-20190505152634-909a45200d6d
-	github.com/dustin/go-humanize v1.0.0
+	github.com/dustin/go-humanize v1.0.1
 	github.com/eclipse/paho.mqtt.golang v1.3.0
 	github.com/fatih/color v1.10.0
 	github.com/fatih/structs v1.1.0
@@ -24,13 +24,14 @@ require (
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/golang-jwt/jwt/v4 v4.4.2
 	github.com/gomodule/redigo v1.8.3
-	github.com/google/uuid v1.3.0
+	github.com/google/uuid v1.4.0
 	github.com/gorilla/mux v1.8.0
 	github.com/hashicorp/vault/api v1.0.4
 	github.com/jcmturner/gokrb5/v8 v8.4.2
 	github.com/json-iterator/go v1.1.12
-	github.com/klauspost/compress v1.13.5
-	github.com/klauspost/cpuid/v2 v2.0.4
+	github.com/klauspost/compress v1.17.4
+	github.com/klauspost/cpuid v1.3.1 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.6
 	github.com/klauspost/pgzip v1.2.5
 	github.com/klauspost/readahead v1.3.1
 	github.com/klauspost/reedsolomon v1.9.11
@@ -40,10 +41,9 @@ require (
 	github.com/miekg/dns v1.1.35
 	github.com/minio/cli v1.22.0
 	github.com/minio/highwayhash v1.0.2
-	github.com/minio/md5-simd v1.1.1 // indirect
-	github.com/minio/minio-go/v7 v7.0.21
+	github.com/minio/minio-go/v7 v7.0.65
 	github.com/minio/selfupdate v0.3.1
-	github.com/minio/sha256-simd v1.0.0
+	github.com/minio/sha256-simd v1.0.1
 	github.com/minio/simdjson-go v0.2.1
 	github.com/minio/sio v0.2.1
 	github.com/mitchellh/go-homedir v1.1.0
@@ -61,6 +61,7 @@ require (
 	github.com/rs/cors v1.7.0
 	github.com/secure-io/sio-go v0.3.1
 	github.com/shirou/gopsutil/v3 v3.21.1
+	github.com/smartystreets/goconvey v1.6.4 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
 	github.com/streadway/amqp v1.0.0
 	github.com/tidwall/gjson v1.14.3
@@ -74,9 +75,9 @@ require (
 	go.etcd.io/etcd/api/v3 v3.5.0
 	go.etcd.io/etcd/client/v3 v3.5.0
 	go.uber.org/zap v1.17.0
-	golang.org/x/crypto v0.6.0
-	golang.org/x/net v0.7.0
-	golang.org/x/sys v0.5.0
+	golang.org/x/crypto v0.16.0
+	golang.org/x/net v0.19.0
+	golang.org/x/sys v0.15.0
 	google.golang.org/api v0.88.0
 	gopkg.in/yaml.v2 v2.4.0
 )
