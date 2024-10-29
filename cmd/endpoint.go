@@ -17,8 +17,6 @@
 package cmd
 
 import (
-	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -32,12 +30,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dustin/go-humanize"
+	humanize "github.com/dustin/go-humanize"
+
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/cmd/config"
-	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/env"
 	"github.com/minio/minio/pkg/mountinfo"
 	xnet "github.com/minio/minio/pkg/net"
 )
@@ -599,8 +596,6 @@ func CreateEndpoints(serverAddr string, foundLocal bool, args ...[]string) (Endp
 		return endpoints, setupType, err
 	}
 
-	_, serverAddrPort := mustSplitHostPort(serverAddr)
-
 	// For single arg, return FS setup.
 	if len(args) == 1 && len(args[0]) == 1 {
 		var endpoint Endpoint
@@ -625,135 +620,8 @@ func CreateEndpoints(serverAddr string, foundLocal bool, args ...[]string) (Endp
 		return endpoints, setupType, nil
 	}
 
-	for _, iargs := range args {
-		// Convert args to endpoints
-		eps, err := NewEndpoints(iargs...)
-		if err != nil {
-			return endpoints, setupType, config.ErrInvalidErasureEndpoints(nil).Msg(err.Error())
-		}
+	return endpoints, setupType, config.ErrInvalidFSEndpoint(nil).Msg("only unique endpoint is supported")
 
-		// Check for cross device mounts if any.
-		if err = checkCrossDeviceMounts(eps); err != nil {
-			return endpoints, setupType, config.ErrInvalidErasureEndpoints(nil).Msg(err.Error())
-		}
-
-		endpoints = append(endpoints, eps...)
-	}
-
-	if len(endpoints) == 0 {
-		return endpoints, setupType, config.ErrInvalidErasureEndpoints(nil).Msg("invalid number of endpoints")
-	}
-
-	// Return Erasure setup when all endpoints are path style.
-	if endpoints[0].Type() == PathEndpointType {
-		setupType = ErasureSetupType
-		return endpoints, setupType, nil
-	}
-
-	if err = endpoints.UpdateIsLocal(foundLocal); err != nil {
-		return endpoints, setupType, config.ErrInvalidErasureEndpoints(nil).Msg(err.Error())
-	}
-
-	// Here all endpoints are URL style.
-	endpointPathSet := set.NewStringSet()
-	localEndpointCount := 0
-	localServerHostSet := set.NewStringSet()
-	localPortSet := set.NewStringSet()
-
-	for _, endpoint := range endpoints {
-		endpointPathSet.Add(endpoint.Path)
-		if endpoint.IsLocal {
-			localServerHostSet.Add(endpoint.Hostname())
-
-			var port string
-			_, port, err = net.SplitHostPort(endpoint.Host)
-			if err != nil {
-				port = serverAddrPort
-			}
-			localPortSet.Add(port)
-
-			localEndpointCount++
-		}
-	}
-
-	// Check whether same path is not used in endpoints of a host on different port.
-	{
-		pathIPMap := make(map[string]set.StringSet)
-		for _, endpoint := range endpoints {
-			host := endpoint.Hostname()
-			hostIPSet, _ := getHostIP(host)
-			if IPSet, ok := pathIPMap[endpoint.Path]; ok {
-				if !IPSet.Intersection(hostIPSet).IsEmpty() {
-					return endpoints, setupType,
-						config.ErrInvalidErasureEndpoints(nil).Msg(fmt.Sprintf("path '%s' can not be served by different port on same address", endpoint.Path))
-				}
-				pathIPMap[endpoint.Path] = IPSet.Union(hostIPSet)
-			} else {
-				pathIPMap[endpoint.Path] = hostIPSet
-			}
-		}
-	}
-
-	// Check whether same path is used for more than 1 local endpoints.
-	{
-		localPathSet := set.CreateStringSet()
-		for _, endpoint := range endpoints {
-			if !endpoint.IsLocal {
-				continue
-			}
-			if localPathSet.Contains(endpoint.Path) {
-				return endpoints, setupType,
-					config.ErrInvalidErasureEndpoints(nil).Msg(fmt.Sprintf("path '%s' cannot be served by different address on same server", endpoint.Path))
-			}
-			localPathSet.Add(endpoint.Path)
-		}
-	}
-
-	// All endpoints are pointing to local host
-	if len(endpoints) == localEndpointCount {
-		// If all endpoints have same port number, Just treat it as local erasure setup
-		// using URL style endpoints.
-		if len(localPortSet) == 1 {
-			if len(localServerHostSet) > 1 {
-				return endpoints, setupType,
-					config.ErrInvalidErasureEndpoints(nil).Msg("all local endpoints should not have different hostnames/ips")
-			}
-			return endpoints, ErasureSetupType, nil
-		}
-
-		// Even though all endpoints are local, but those endpoints use different ports.
-		// This means it is DistErasure setup.
-	}
-
-	// Add missing port in all endpoints.
-	for i := range endpoints {
-		_, port, err := net.SplitHostPort(endpoints[i].Host)
-		if err != nil {
-			endpoints[i].Host = net.JoinHostPort(endpoints[i].Host, serverAddrPort)
-		} else if endpoints[i].IsLocal && serverAddrPort != port {
-			// If endpoint is local, but port is different than serverAddrPort, then make it as remote.
-			endpoints[i].IsLocal = false
-		}
-	}
-
-	uniqueArgs := set.NewStringSet()
-	for _, endpoint := range endpoints {
-		uniqueArgs.Add(endpoint.Host)
-	}
-
-	// Error out if we have less than 2 unique servers.
-	if len(uniqueArgs.ToSlice()) < 2 && setupType == DistErasureSetupType {
-		err := fmt.Errorf("Unsupported number of endpoints (%s), minimum number of servers cannot be less than 2 in distributed setup", endpoints)
-		return endpoints, setupType, err
-	}
-
-	publicIPs := env.Get(config.EnvPublicIPs, "")
-	if len(publicIPs) == 0 {
-		updateDomainIPs(uniqueArgs)
-	}
-
-	setupType = DistErasureSetupType
-	return endpoints, setupType, nil
 }
 
 // GetLocalPeer - returns local peer value, returns globalMinioAddr
@@ -783,145 +651,4 @@ func GetLocalPeer(endpointServerPools EndpointServerPools, host, port string) (l
 		return net.JoinHostPort("127.0.0.1", port)
 	}
 	return peerSet.ToSlice()[0]
-}
-
-// GetProxyEndpointLocalIndex returns index of the local proxy endpoint
-func GetProxyEndpointLocalIndex(proxyEps []ProxyEndpoint) int {
-	for i, pep := range proxyEps {
-		if pep.IsLocal {
-			return i
-		}
-	}
-	return -1
-}
-
-func httpDo(clnt *http.Client, req *http.Request, f func(*http.Response, error) error) error {
-	ctx, cancel := context.WithTimeout(GlobalContext, 200*time.Millisecond)
-	defer cancel()
-
-	// Run the HTTP request in a goroutine and pass the response to f.
-	c := make(chan error, 1)
-	req = req.WithContext(ctx)
-	go func() { c <- f(clnt.Do(req)) }()
-	select {
-	case <-ctx.Done():
-		<-c // Wait for f to return.
-		return ctx.Err()
-	case err := <-c:
-		return err
-	}
-}
-
-func getOnlineProxyEndpointIdx() int {
-	type reqIndex struct {
-		Request *http.Request
-		Idx     int
-	}
-
-	proxyRequests := make(map[*http.Client]reqIndex, len(globalProxyEndpoints))
-	for i, proxyEp := range globalProxyEndpoints {
-		proxyEp := proxyEp
-		serverURL := &url.URL{
-			Scheme: proxyEp.Scheme,
-			Host:   proxyEp.Host,
-			Path:   pathJoin(healthCheckPathPrefix, healthCheckLivenessPath),
-		}
-
-		req, err := http.NewRequest(http.MethodGet, serverURL.String(), nil)
-		if err != nil {
-			continue
-		}
-
-		proxyRequests[&http.Client{
-			Transport: proxyEp.Transport,
-		}] = reqIndex{
-			Request: req,
-			Idx:     i,
-		}
-	}
-
-	for c, r := range proxyRequests {
-		if err := httpDo(c, r.Request, func(resp *http.Response, err error) error {
-			if err != nil {
-				return err
-			}
-			xhttp.DrainBody(resp.Body)
-			if resp.StatusCode != http.StatusOK {
-				return errors.New(resp.Status)
-			}
-			if v := resp.Header.Get(xhttp.MinIOServerStatus); v == unavailable {
-				return errors.New(v)
-			}
-			return nil
-		}); err != nil {
-			continue
-		}
-		return r.Idx
-	}
-	return -1
-}
-
-// GetProxyEndpoints - get all endpoints that can be used to proxy list request.
-func GetProxyEndpoints(endpointServerPools EndpointServerPools) []ProxyEndpoint {
-	var proxyEps []ProxyEndpoint
-
-	proxyEpSet := set.NewStringSet()
-
-	for _, ep := range endpointServerPools {
-		for _, endpoint := range ep.Endpoints {
-			if endpoint.Type() != URLEndpointType {
-				continue
-			}
-
-			host := endpoint.Host
-			if proxyEpSet.Contains(host) {
-				continue
-			}
-			proxyEpSet.Add(host)
-
-			proxyEps = append(proxyEps, ProxyEndpoint{
-				Endpoint:  endpoint,
-				Transport: globalProxyTransport,
-			})
-		}
-	}
-	return proxyEps
-}
-
-func updateDomainIPs(endPoints set.StringSet) {
-	ipList := set.NewStringSet()
-	for e := range endPoints {
-		host, port, err := net.SplitHostPort(e)
-		if err != nil {
-			if strings.Contains(err.Error(), "missing port in address") {
-				host = e
-				port = globalMinioPort
-			} else {
-				continue
-			}
-		}
-
-		if net.ParseIP(host) == nil {
-			IPs, err := getHostIP(host)
-			if err != nil {
-				continue
-			}
-
-			IPsWithPort := IPs.ApplyFunc(func(ip string) string {
-				return net.JoinHostPort(ip, port)
-			})
-
-			ipList = ipList.Union(IPsWithPort)
-		}
-
-		ipList.Add(net.JoinHostPort(host, port))
-	}
-
-	globalDomainIPs = ipList.FuncMatch(func(ip string, matchString string) bool {
-		host, _, err := net.SplitHostPort(ip)
-		if err != nil {
-			host = ip
-		}
-		return !net.ParseIP(host).IsLoopback() && host != "localhost"
-	}, "")
 }

@@ -29,7 +29,6 @@ import (
 
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/bucket/lifecycle"
 )
 
 // Returns a hexadecimal representation of time at the
@@ -111,11 +110,6 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 		w.Header().Set(xhttp.Expires, objInfo.Expires.UTC().Format(http.TimeFormat))
 	}
 
-	if globalCacheConfig.Enabled {
-		w.Header().Set(xhttp.XCache, objInfo.CacheStatus.String())
-		w.Header().Set(xhttp.XCacheLookup, objInfo.CacheLookupStatus.String())
-	}
-
 	// Set tag count if object has tags
 	if len(objInfo.UserTags) > 0 {
 		tags, _ := url.ParseQuery(objInfo.UserTags)
@@ -182,27 +176,6 @@ func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSp
 
 	if objInfo.ReplicationStatus.String() != "" {
 		w.Header()[xhttp.AmzBucketReplicationStatus] = []string{objInfo.ReplicationStatus.String()}
-	}
-
-	if lc, err := globalLifecycleSys.Get(objInfo.Bucket); err == nil {
-		if opts.VersionID == "" {
-			if ruleID, expiryTime := lc.PredictExpiryTime(lifecycle.ObjectOpts{
-				Name:             objInfo.Name,
-				UserTags:         objInfo.UserTags,
-				VersionID:        objInfo.VersionID,
-				ModTime:          objInfo.ModTime,
-				IsLatest:         objInfo.IsLatest,
-				DeleteMarker:     objInfo.DeleteMarker,
-				SuccessorModTime: objInfo.SuccessorModTime,
-			}); !expiryTime.IsZero() {
-				w.Header()[xhttp.AmzExpiration] = []string{
-					fmt.Sprintf(`expiry-date="%s", rule-id="%s"`, expiryTime.Format(http.TimeFormat), ruleID),
-				}
-			}
-		}
-		if objInfo.TransitionStatus == lifecycle.TransitionComplete {
-			w.Header()[xhttp.AmzStorageClass] = []string{objInfo.StorageClass}
-		}
 	}
 
 	return nil

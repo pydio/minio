@@ -24,10 +24,10 @@ import (
 	"strings"
 
 	humanize "github.com/dustin/go-humanize"
+
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/logger"
 	color "github.com/minio/minio/pkg/color"
-	"github.com/minio/minio/pkg/madmin"
 	xnet "github.com/minio/minio/pkg/net"
 )
 
@@ -61,11 +61,6 @@ func printStartupMessage(apiEndpoints []string, err error) {
 	}
 
 	strippedAPIEndpoints := stripStandardPorts(apiEndpoints)
-	// If cache layer is enabled, print cache capacity.
-	cachedObjAPI := newCachedObjectLayerFn()
-	if cachedObjAPI != nil {
-		printCacheStorageInfo(cachedObjAPI.StorageInfo(GlobalContext))
-	}
 
 	// Object layer is initialized then print StorageInfo.
 	objAPI := newObjectLayerFn()
@@ -204,21 +199,7 @@ func printObjectAPIMsg() {
 
 // Get formatted disk/storage info message.
 func getStorageInfoMsg(storageInfo StorageInfo) string {
-	var msg string
-	var mcMessage string
-	onlineDisks, offlineDisks := getOnlineOfflineDisksStats(storageInfo.Disks)
-	if storageInfo.Backend.Type == madmin.Erasure {
-		if offlineDisks.Sum() > 0 {
-			mcMessage = "Use `mc admin info` to look for latest server/disk info\n"
-		}
-
-		diskInfo := fmt.Sprintf(" %d Online, %d Offline. ", onlineDisks.Sum(), offlineDisks.Sum())
-		msg += color.Blue("Status:") + fmt.Sprintf(getFormatStr(len(diskInfo), 8), diskInfo)
-		if len(mcMessage) > 0 {
-			msg = fmt.Sprintf("%s %s", mcMessage, msg)
-		}
-	}
-	return msg
+	return ""
 }
 
 // Prints startup message of storage capacity and erasure information.

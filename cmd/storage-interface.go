@@ -21,6 +21,28 @@ import (
 	"io"
 )
 
+// WalkDirOptions provides options for WalkDir operations.
+type WalkDirOptions struct {
+	// Bucket to scanner
+	Bucket string
+
+	// Directory inside the bucket.
+	BaseDir string
+
+	// Do a full recursive scan.
+	Recursive bool
+
+	// ReportNotFound will return errFileNotFound if all disks reports the BaseDir cannot be found.
+	ReportNotFound bool
+
+	// FilterPrefix will only return results with given prefix within folder.
+	// Should never contain a slash.
+	FilterPrefix string
+
+	// ForwardTo will forward to the given object path.
+	ForwardTo string
+}
+
 // StorageAPI interface.
 type StorageAPI interface {
 	// Stringified version of disk.
@@ -36,7 +58,6 @@ type StorageAPI interface {
 	Close() error
 	GetDiskID() (string, error)
 	SetDiskID(id string)
-	Healing() *healingTracker // Returns nil if disk is not healing.
 
 	DiskInfo(ctx context.Context) (info DiskInfo, err error)
 	NSScanner(ctx context.Context, cache dataUsageCache) (dataUsageCache, error)

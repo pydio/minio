@@ -52,8 +52,7 @@ const (
 type serviceType string
 
 const (
-	serviceS3  serviceType = "s3"
-	serviceSTS serviceType = "sts"
+	serviceS3 serviceType = "s3"
 )
 
 // getCanonicalHeaders generate a list of request headers with their values
@@ -94,13 +93,13 @@ func getSignedHeaders(signedHeaders http.Header) string {
 // getCanonicalRequest generate a canonical request of style
 //
 // canonicalRequest =
-//  <HTTPMethod>\n
-//  <CanonicalURI>\n
-//  <CanonicalQueryString>\n
-//  <CanonicalHeaders>\n
-//  <SignedHeaders>\n
-//  <HashedPayload>
 //
+//	<HTTPMethod>\n
+//	<CanonicalURI>\n
+//	<CanonicalQueryString>\n
+//	<CanonicalHeaders>\n
+//	<SignedHeaders>\n
+//	<HashedPayload>
 func getCanonicalRequest(extractedSignedHeaders http.Header, payload, queryStr, urlPath, method string) string {
 	rawQuery := strings.Replace(queryStr, "+", "%20", -1)
 	encodedPath := s3utils.EncodePath(urlPath)
@@ -168,7 +167,8 @@ func compareSignatureV4(sig1, sig2 string) bool {
 }
 
 // doesPolicySignatureMatch - Verify query headers with post policy
-//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
+//   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-HTTPPOSTConstructPolicy.html
+//
 // returns ErrNone if the signature matches.
 func doesPolicySignatureV4Match(formValues http.Header) (auth.Credentials, APIErrorCode) {
 	// Server region.
@@ -201,7 +201,8 @@ func doesPolicySignatureV4Match(formValues http.Header) (auth.Credentials, APIEr
 }
 
 // doesPresignedSignatureMatch - Verify query headers with presigned signature
-//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+//   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+//
 // returns ErrNone if the signature matches.
 func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region string, stype serviceType) APIErrorCode {
 	// Copy request
@@ -327,7 +328,8 @@ func doesPresignedSignatureMatch(hashedPayload string, r *http.Request, region s
 }
 
 // doesSignatureMatch - Verify authorization header with calculated header in accordance with
-//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html
+//   - http://docs.aws.amazon.com/AmazonS3/latest/API/sig-v4-authenticating-requests.html
+//
 // returns ErrNone if signature matches.
 func doesSignatureMatch(hashedPayload string, r *http.Request, region string, stype serviceType) APIErrorCode {
 	// Copy request.

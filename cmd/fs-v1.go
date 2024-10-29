@@ -35,6 +35,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio-go/v7/pkg/tags"
 	"github.com/minio/minio/cmd/config"
@@ -318,16 +319,7 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 // The updated cache for the bucket is returned.
 // A partially updated bucket may be returned.
 func (fs *FSObjects) scanBucket(ctx context.Context, bucket string, cache dataUsageCache) (dataUsageCache, error) {
-	// Get bucket policy
-	// Check if the current bucket has a configured lifecycle policy
-	lc, err := globalLifecycleSys.Get(bucket)
-	if err == nil && lc.HasActiveRules("", true) {
-		if intDataUpdateTracker.debug {
-			logger.Info(color.Green("scanBucket:") + " lifecycle: Active rules found")
-		}
-		cache.Info.lifeCycle = lc
-	}
-
+	var err error
 	// Load bucket info.
 	cache, err = scanDataFolder(ctx, fs.fsPath, cache, func(item scannerItem) (sizeSummary, error) {
 		bucket, object := item.bucket, item.objectPath()
@@ -1575,12 +1567,6 @@ func (fs *FSObjects) Walk(ctx context.Context, bucket, prefix string, results ch
 	return fsWalk(ctx, fs, bucket, prefix, fs.listDirFactory(), fs.isLeaf, fs.isLeafDir, results, fs.getObjectInfoNoFSLock, fs.getObjectInfoNoFSLock)
 }
 
-// HealObjects - no-op for fs. Valid only for Erasure.
-func (fs *FSObjects) HealObjects(ctx context.Context, bucket, prefix string, opts madmin.HealOpts, fn HealObjectFn) (e error) {
-	logger.LogIf(ctx, NotImplemented{})
-	return NotImplemented{}
-}
-
 // GetMetrics - no op
 func (fs *FSObjects) GetMetrics(ctx context.Context) (*BackendMetrics, error) {
 	logger.LogIf(ctx, NotImplemented{})
@@ -1632,16 +1618,6 @@ func (fs *FSObjects) IsCompressionSupported() bool {
 // IsTaggingSupported returns true, object tagging is supported in fs object layer.
 func (fs *FSObjects) IsTaggingSupported() bool {
 	return true
-}
-
-// Health returns health of the object layer
-func (fs *FSObjects) Health(ctx context.Context, opts HealthOptions) HealthResult {
-	if _, err := os.Stat(fs.fsPath); err != nil {
-		return HealthResult{}
-	}
-	return HealthResult{
-		Healthy: newObjectLayerFn() != nil,
-	}
 }
 
 // ReadHealth returns "read" health of the object layer

@@ -18,10 +18,13 @@ package cmd
 
 import (
 	"context"
+	"crypto/tls"
 	"net/http"
+	"net/url"
 	"runtime"
 	"time"
 
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/madmin"
 )
@@ -31,9 +34,6 @@ import (
 func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Request) madmin.ServerProperties {
 	var localEndpoints Endpoints
 	addr := r.Host
-	if globalIsDistErasure {
-		addr = globalLocalNodeName
-	}
 	network := make(map[string]string)
 	for _, ep := range endpointServerPools {
 		for _, endpoint := range ep.Endpoints {
@@ -79,4 +79,57 @@ func getLocalServerProperty(endpointServerPools EndpointServerPools, r *http.Req
 	}
 
 	return props
+}
+
+// isServerResolvable - checks if the endpoint is resolvable
+// by sending a naked HTTP request with liveness checks.
+func isServerResolvable(endpoint Endpoint, timeout time.Duration) error {
+	serverURL := &url.URL{
+		Scheme: endpoint.Scheme,
+		Host:   endpoint.Host,
+		Path:   pathJoin(healthCheckPathPrefix, healthCheckLivenessPath),
+	}
+
+	var tlsConfig *tls.Config
+	if globalIsTLS {
+		tlsConfig = &tls.Config{
+			RootCAs: globalRootCAs,
+		}
+	}
+
+	httpClient := &http.Client{
+		Transport:
+		// For more details about various values used here refer
+		// https://golang.org/pkg/net/http/#Transport documentation
+		&http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			DialContext:           xhttp.NewCustomDialContext(3 * time.Second),
+			ResponseHeaderTimeout: 3 * time.Second,
+			TLSHandshakeTimeout:   3 * time.Second,
+			ExpectContinueTimeout: 3 * time.Second,
+			TLSClientConfig:       tlsConfig,
+			// Go net/http automatically unzip if content-type is
+			// gzip disable this feature, as we are always interested
+			// in raw stream.
+			DisableCompression: true,
+		},
+	}
+	defer httpClient.CloseIdleConnections()
+
+	ctx, cancel := context.WithTimeout(GlobalContext, timeout)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, serverURL.String(), nil)
+	if err != nil {
+		cancel()
+		return err
+	}
+
+	resp, err := httpClient.Do(req)
+	cancel()
+	if err != nil {
+		return err
+	}
+	xhttp.DrainBody(resp.Body)
+
+	return nil
 }

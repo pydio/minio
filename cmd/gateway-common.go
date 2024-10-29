@@ -23,14 +23,11 @@ import (
 	"strings"
 	"time"
 
+	minio "github.com/minio/minio-go/v7"
 	"github.com/minio/minio/cmd/config"
 	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/env"
 	"github.com/minio/minio/pkg/hash"
 	xnet "github.com/minio/minio/pkg/net"
-
-	minio "github.com/minio/minio-go/v7"
 )
 
 var (
@@ -359,26 +356,6 @@ func parseGatewaySSE(s string) (gatewaySSE, error) {
 		}
 	}
 	return gwSlice, nil
-}
-
-// handle gateway env vars
-func gatewayHandleEnvVars() {
-	// Handle common env vars.
-	handleCommonEnvVars()
-
-	if !globalActiveCred.IsValid() {
-		logger.Fatal(config.ErrInvalidCredentials(nil),
-			"Unable to validate credentials inherited from the shell environment")
-	}
-
-	gwsseVal := env.Get("MINIO_GATEWAY_SSE", "")
-	if gwsseVal != "" {
-		var err error
-		GlobalGatewaySSE, err = parseGatewaySSE(gwsseVal)
-		if err != nil {
-			logger.Fatal(err, "Unable to parse MINIO_GATEWAY_SSE value (`%s`)", gwsseVal)
-		}
-	}
 }
 
 // shouldMeterRequest checks whether incoming request should be added to prometheus gateway metrics

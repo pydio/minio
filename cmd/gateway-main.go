@@ -28,6 +28,8 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/minio/cli"
+
+	"github.com/minio/minio/cmd/config"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/certs"
@@ -153,11 +155,14 @@ func ValidateGatewayArguments(serverAddr, endpointAddr string) error {
 
 // StartGateway - handler for 'minio gateway <name>'.
 func StartGateway(ctx *cli.Context, gw Gateway) {
+	globs := NewGlobals()
 	defer globalDNSCache.Stop()
+	defer globs.DNSCache.Stop()
 
 	// This is only to uniquely identify each gateway deployments.
-	globalDeploymentID = env.Get("MINIO_GATEWAY_DEPLOYMENT_ID", mustGetUUID())
-	logger.SetDeploymentID(globalDeploymentID)
+	globs.DeploymentID = env.Get("MINIO_GATEWAY_DEPLOYMENT_ID", mustGetUUID())
+	logger.SetDeploymentID(globs.DeploymentID)
+	globalDeploymentID = globs.DeploymentID
 
 	if gw == nil {
 		logger.FatalIf(errUnexpected, "Gateway implementation not initialized")
@@ -214,16 +219,19 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		return fmt.Sprintf("%s://%s", getURLScheme(globalIsTLS), net.JoinHostPort(host, globalMinioPort))
 	}()
 
-	// Handle gateway specific env
-	gatewayHandleEnvVars()
+	// Handle common env vars.
+	handleCommonEnvVars()
+
+	if !globalActiveCred.IsValid() {
+		logger.Fatal(config.ErrInvalidCredentials(nil),
+			"Unable to validate credentials inherited from the shell environment")
+	}
 
 	// Set system resources to maximum.
 	setMaxResources()
 
 	// Set when gateway is enabled
 	globalIsGateway = true
-
-	enableConfigOps := false
 
 	// TODO: We need to move this code with globalConfigSys.Init()
 	// for now keep it here such that "s3" gateway layer initializes
@@ -245,25 +253,8 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 	// avoid URL path encoding minio/minio#8950
 	router := mux.NewRouter().SkipClean(true).UseEncodedPath()
 
-	if globalEtcdClient != nil {
-		// Enable STS router if etcd is enabled.
-		registerSTSRouter(router)
-	}
-
-	enableIAMOps := globalEtcdClient != nil
-
-	// Enable IAM admin APIs if etcd is enabled, if not just enable basic
-	// operations such as profiling, server info etc.
-	registerAdminRouter(router, enableConfigOps, enableIAMOps)
-
-	// Add healthcheck router
-	registerHealthCheckRouter(router)
-
-	// Add server metrics router
-	registerMetricsRouter(router)
-
 	// Add API router.
-	registerAPIRouter(router)
+	registerAPIRouter(globs, router)
 
 	// Use all the middlewares
 	router.Use(globalHandlers...)
@@ -310,43 +301,6 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 		}
 		logger.FatalIf(globalNotificationSys.Init(GlobalContext, buckets, newObject), "Unable to initialize notification system")
 	}
-
-	if globalEtcdClient != nil {
-		// ****  WARNING ****
-		// Migrating to encrypted backend on etcd should happen before initialization of
-		// IAM sub-systems, make sure that we do not move the above codeblock elsewhere.
-		logger.FatalIf(migrateIAMConfigsEtcdToEncrypted(GlobalContext, globalEtcdClient),
-			"Unable to handle encrypted backend for iam and policies")
-	}
-
-	if enableIAMOps {
-		// Initialize users credentials and policies in background.
-		globalIAMSys.InitStore(newObject)
-
-		go globalIAMSys.Init(GlobalContext, newObject)
-	}
-
-	if globalCacheConfig.Enabled {
-		// initialize the new disk cache objects.
-		var cacheAPI CacheObjectLayer
-		cacheAPI, err = newServerCacheObjects(GlobalContext, globalCacheConfig)
-		logger.FatalIf(err, "Unable to initialize disk caching")
-
-		globalObjLayerMutex.Lock()
-		globalCacheObjectAPI = cacheAPI
-		globalObjLayerMutex.Unlock()
-	}
-
-	// Populate existing buckets to the etcd backend
-	/*
-		if globalDNSConfig != nil {
-			buckets, err := newObject.ListBuckets(GlobalContext)
-			if err != nil {
-				logger.Fatal(err, "Unable to list buckets")
-			}
-			initFederatorBackend(buckets, newObject)
-		}
-	*/
 
 	// Verify if object layer supports
 	// - encryption

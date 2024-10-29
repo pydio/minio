@@ -24,14 +24,13 @@ import (
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/cmd/logger/message/log"
 	"github.com/minio/minio/cmd/logger/target/console"
-	xnet "github.com/minio/minio/pkg/net"
 	"github.com/minio/minio/pkg/pubsub"
 )
 
 // number of log messages to buffer
 const defaultLogBufferCount = 10000
 
-//HTTPConsoleLoggerSys holds global console logger state
+// HTTPConsoleLoggerSys holds global console logger state
 type HTTPConsoleLoggerSys struct {
 	sync.RWMutex
 	pubsub   *pubsub.PubSub
@@ -53,17 +52,8 @@ func NewConsoleLogger(ctx context.Context) *HTTPConsoleLoggerSys {
 
 // SetNodeName - sets the node name if any after distributed setup has initialized
 func (sys *HTTPConsoleLoggerSys) SetNodeName(nodeName string) {
-	if !globalIsDistErasure {
-		sys.nodeName = ""
-		return
-	}
-
-	host, err := xnet.ParseHost(globalLocalNodeName)
-	if err != nil {
-		logger.FatalIf(err, "Unable to start console logging subsystem")
-	}
-
-	sys.nodeName = host.Name
+	sys.nodeName = ""
+	return
 }
 
 // HasLogListeners returns true if console log listeners are registered

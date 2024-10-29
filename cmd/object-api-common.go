@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	humanize "github.com/dustin/go-humanize"
+
 	"github.com/minio/minio/pkg/sync/errgroup"
 )
 
@@ -51,7 +52,7 @@ var globalObjLayerMutex sync.RWMutex
 // Global object layer, only accessed by globalObjectAPI.
 var globalObjectAPI ObjectLayer
 
-//Global cacheObjects, only accessed by newCacheObjectsFn().
+// Global cacheObjects, only accessed by newCacheObjectsFn().
 var globalCacheObjectAPI CacheObjectLayer
 
 // Checks if the object is a directory, this logic uses
@@ -59,31 +60,6 @@ var globalCacheObjectAPI CacheObjectLayer
 // returns true.
 func isObjectDir(object string, size int64) bool {
 	return HasSuffix(object, SlashSeparator) && size == 0
-}
-
-func newStorageAPIWithoutHealthCheck(endpoint Endpoint) (storage StorageAPI, err error) {
-	if endpoint.IsLocal {
-		storage, err := newXLStorage(endpoint)
-		if err != nil {
-			return nil, err
-		}
-		return newXLStorageDiskIDCheck(storage), nil
-	}
-
-	return newStorageRESTClient(endpoint, false), nil
-}
-
-// Depending on the disk type network or local, initialize storage API.
-func newStorageAPI(endpoint Endpoint) (storage StorageAPI, err error) {
-	if endpoint.IsLocal {
-		storage, err := newXLStorage(endpoint)
-		if err != nil {
-			return nil, err
-		}
-		return newXLStorageDiskIDCheck(storage), nil
-	}
-
-	return newStorageRESTClient(endpoint, true), nil
 }
 
 func listObjectsNonSlash(ctx context.Context, bucket, prefix, marker, delimiter string, maxKeys int, tpool *TreeWalkPool, listDir ListDirFunc, isLeaf IsLeafFunc, isLeafDir IsLeafDirFunc, getObjInfo func(context.Context, string, string) (ObjectInfo, error), getObjectInfoDirs ...func(context.Context, string, string) (ObjectInfo, error)) (loi ListObjectsInfo, err error) {
@@ -118,7 +94,6 @@ func listObjectsNonSlash(ctx context.Context, bucket, prefix, marker, delimiter 
 				// ignore quorum error as it might be an entry from an outdated disk.
 				if IsErrIgnored(err, []error{
 					errFileNotFound,
-					errErasureReadQuorum,
 				}...) {
 					continue
 				}
@@ -322,7 +297,6 @@ func listObjects(ctx context.Context, obj ObjectLayer, bucket, prefix, marker, d
 					// ignore quorum error as it might be an entry from an outdated disk.
 					if IsErrIgnored(err, []error{
 						errFileNotFound,
-						errErasureReadQuorum,
 					}...) {
 						return nil
 					}

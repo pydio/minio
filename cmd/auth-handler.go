@@ -212,36 +212,29 @@ func getClaimsFromToken(token string) (map[string]interface{}, error) {
 		return nil, errAuthentication
 	}
 
-	if globalPolicyOPA == nil {
-		// If OPA is not set and if ldap claim key is set, allow the claim.
-		if _, ok := claims.MapClaims[ldapUser]; ok {
-			return claims.Map(), nil
-		}
-
-		// If OPA is not set, session token should
-		// have a policy and its mandatory, reject
-		// requests without policy claim.
-		_, pokOpenID := claims.MapClaims[iamPolicyClaimNameOpenID()]
-		_, pokSA := claims.MapClaims[iamPolicyClaimNameSA()]
-		if !pokOpenID && !pokSA {
-			return nil, errAuthentication
-		}
-
-		sp, spok := claims.Lookup(iampolicy.SessionPolicyName)
-		if !spok {
-			return claims.Map(), nil
-		}
-		// Looks like subpolicy is set and is a string, if set then its
-		// base64 encoded, decode it. Decoding fails reject such requests.
-		spBytes, err := base64.StdEncoding.DecodeString(sp)
-		if err != nil {
-			// Base64 decoding fails, we should log to indicate
-			// something is malforming the request sent by client.
-			logger.LogIf(GlobalContext, err, logger.Application)
-			return nil, errAuthentication
-		}
-		claims.MapClaims[iampolicy.SessionPolicyName] = string(spBytes)
+	// If OPA is not set, session token should
+	// have a policy and its mandatory, reject
+	// requests without policy claim.
+	_, pokOpenID := claims.MapClaims[iamPolicyClaimNameOpenID()]
+	_, pokSA := claims.MapClaims[iamPolicyClaimNameSA()]
+	if !pokOpenID && !pokSA {
+		return nil, errAuthentication
 	}
+
+	sp, spok := claims.Lookup(iampolicy.SessionPolicyName)
+	if !spok {
+		return claims.Map(), nil
+	}
+	// Looks like subpolicy is set and is a string, if set then its
+	// base64 encoded, decode it. Decoding fails reject such requests.
+	spBytes, err := base64.StdEncoding.DecodeString(sp)
+	if err != nil {
+		// Base64 decoding fails, we should log to indicate
+		// something is malforming the request sent by client.
+		logger.LogIf(GlobalContext, err, logger.Application)
+		return nil, errAuthentication
+	}
+	claims.MapClaims[iampolicy.SessionPolicyName] = string(spBytes)
 
 	return claims.Map(), nil
 }
@@ -266,9 +259,10 @@ func checkClaimsFromToken(r *http.Request, cred auth.Credentials) (map[string]in
 }
 
 // Check request auth type verifies the incoming http request
-// - validates the request signature
-// - validates the policy action if anonymous tests bucket policies if any,
-//   for authenticated requests validates IAM policies.
+//   - validates the request signature
+//   - validates the policy action if anonymous tests bucket policies if any,
+//     for authenticated requests validates IAM policies.
+//
 // returns APIErrorCode if any to be replied to the client.
 func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (s3Err APIErrorCode) {
 	_, _, s3Err = checkRequestAuthTypeCredential(ctx, r, action, bucketName, objectName)
@@ -276,9 +270,10 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 }
 
 // Check request auth type verifies the incoming http request
-// - validates the request signature
-// - validates the policy action if anonymous tests bucket policies if any,
-//   for authenticated requests validates IAM policies.
+//   - validates the request signature
+//   - validates the policy action if anonymous tests bucket policies if any,
+//     for authenticated requests validates IAM policies.
+//
 // returns APIErrorCode if any to be replied to the client.
 // Additionally returns the accessKey used in the request, and if this request is by an admin.
 func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (cred auth.Credentials, owner bool, s3Err APIErrorCode) {

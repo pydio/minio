@@ -35,6 +35,7 @@ import (
 	"github.com/fatih/color"
 	dns2 "github.com/miekg/dns"
 	"github.com/minio/cli"
+
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/cmd/config"
 	xhttp "github.com/minio/minio/cmd/http"
@@ -43,7 +44,6 @@ import (
 	"github.com/minio/minio/pkg/certs"
 	"github.com/minio/minio/pkg/console"
 	"github.com/minio/minio/pkg/env"
-	"github.com/minio/minio/pkg/handlers"
 )
 
 // serverDebugLog will enable debug printing
@@ -71,43 +71,12 @@ func init() {
 
 	initGlobalContext()
 
-	globalForwarder = handlers.NewForwarder(&handlers.Forwarder{
-		PassHost:     true,
-		RoundTripper: newGatewayHTTPTransport(1 * time.Hour),
-		Logger: func(err error) {
-			if err != nil && !errors.Is(err, context.Canceled) {
-				logger.LogIf(GlobalContext, err)
-			}
-		},
-	})
-
-	//globalTransitionState = newTransitionState()
-
 	console.SetColor("Debug", color.New())
 
 	gob.Register(StorageErr(""))
 }
 
-func getGlobalTransitionState() *transitionState {
-	if globalTransitionState == nil {
-		globalTransitionState = newTransitionState()
-	}
-	return globalTransitionState
-}
-
 func verifyObjectLayerFeatures(name string, objAPI ObjectLayer) {
-	if (GlobalKMS != nil) && !objAPI.IsEncryptionSupported() {
-		logger.Fatal(errInvalidArgument,
-			"Encryption support is requested but '%s' does not support encryption", name)
-	}
-
-	if strings.HasPrefix(name, "gateway") {
-		if GlobalGatewaySSE.IsSet() && GlobalKMS == nil {
-			uiErr := config.ErrInvalidGWSSEEnvValue(nil).Msg("MINIO_GATEWAY_SSE set but KMS is not configured")
-			logger.Fatal(uiErr, "Unable to start gateway with SSE")
-		}
-	}
-
 	globalCompressConfigMu.Lock()
 	if globalCompressConfig.Enabled && !objAPI.IsCompressionSupported() {
 		logger.Fatal(errInvalidArgument,
@@ -118,7 +87,7 @@ func verifyObjectLayerFeatures(name string, objAPI ObjectLayer) {
 
 // Check for updates and print a notification message
 func checkUpdate(mode string) {
-	updateURL := minioReleaseInfoURL
+	updateURL := minioReleaseURL + "minio.sha256sum"
 	if runtime.GOOS == globalWindowsOSName {
 		updateURL = minioReleaseWindowsInfoURL
 	}
@@ -300,7 +269,7 @@ func handleCommonEnvVars() {
 			}
 			domainIPs.Add(endpoint)
 		}
-		updateDomainIPs(domainIPs)
+
 	} else {
 		// Add found interfaces IP address to global domain IPS,
 		// loopback addresses will be naturally dropped.
@@ -308,13 +277,7 @@ func handleCommonEnvVars() {
 		for _, host := range globalEndpoints.Hostnames() {
 			domainIPs.Add(host)
 		}
-		updateDomainIPs(domainIPs)
 	}
-
-	// In place update is true by default if the MINIO_UPDATE is not set
-	// or is not set to 'off', if MINIO_UPDATE is set to 'off' then
-	// in-place update is off.
-	globalInplaceUpdateDisabled = strings.EqualFold(env.Get(config.EnvUpdate, config.EnableOn), config.EnableOff)
 
 	if env.IsSet(config.EnvAccessKey) || env.IsSet(config.EnvSecretKey) {
 		cred, err := auth.CreateCredentials(env.Get(config.EnvAccessKey, ""), env.Get(config.EnvSecretKey, ""))

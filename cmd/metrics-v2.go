@@ -21,15 +21,15 @@ import (
 	"fmt"
 	"net/http"
 	"runtime"
-	"strings"
 	"sync"
 	"time"
 
-	"github.com/minio/minio/cmd/logger"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/procfs"
+
+	"github.com/minio/minio/cmd/logger"
 )
 
 // MetricNamespace is top level grouping of metrics to create the metric name.
@@ -183,6 +183,7 @@ type MetricsGroup struct {
 }
 
 var metricsGroupCache = make(map[string]*timedValue)
+
 var cacheLock sync.Mutex
 
 func cachedRead(ctx context.Context, mg *MetricsGroup) (metrics []Metric) {
@@ -222,7 +223,6 @@ type MetricsGenerator func() MetricsGroup
 func GetGlobalGenerators() []MetricsGenerator {
 	g := []MetricsGenerator{
 		getBucketUsageMetrics,
-		getMinioHealingMetrics,
 		getNodeHealthMetrics,
 		getClusterStorageMetrics,
 	}
@@ -239,7 +239,7 @@ func GetAllGenerators() []MetricsGenerator {
 // GetGeneratorsForPeer - gets the generators to report to peer.
 func GetGeneratorsForPeer() []MetricsGenerator {
 	g := []MetricsGenerator{
-		getCacheMetrics,
+
 		getGoMetrics,
 		getHTTPMetrics,
 		getLocalStorageMetrics,
@@ -255,7 +255,6 @@ func GetGeneratorsForPeer() []MetricsGenerator {
 func GetSingleNodeGenerators() []MetricsGenerator {
 	g := []MetricsGenerator{
 		getNodeHealthMetrics,
-		getCacheMetrics,
 		getHTTPMetrics,
 		getNetworkMetrics,
 		getMinioVersionMetrics,
@@ -273,6 +272,7 @@ func getClusterCapacityTotalBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getClusterCapacityFreeBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
@@ -282,6 +282,7 @@ func getClusterCapacityFreeBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getClusterCapacityUsageBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
@@ -291,6 +292,7 @@ func getClusterCapacityUsageBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getClusterCapacityUsageFreeBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
@@ -310,6 +312,7 @@ func getNodeDiskUsedBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getNodeDiskFreeBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -319,6 +322,7 @@ func getNodeDiskFreeBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getClusterDisksOfflineTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
@@ -358,6 +362,7 @@ func getNodeDiskTotalBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getUsageLastScanActivityMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioMetricNamespace,
@@ -377,6 +382,7 @@ func getBucketUsageTotalBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketUsageObjectsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -386,6 +392,7 @@ func getBucketUsageObjectsTotalMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketRepPendingBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -395,6 +402,7 @@ func getBucketRepPendingBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketRepFailedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -404,6 +412,7 @@ func getBucketRepFailedBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketRepSentBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -413,6 +422,7 @@ func getBucketRepSentBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketRepReceivedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -422,6 +432,7 @@ func getBucketRepReceivedBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketRepPendingOperationsMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -431,6 +442,7 @@ func getBucketRepPendingOperationsMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketRepFailedOperationsMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -440,6 +452,7 @@ func getBucketRepFailedOperationsMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getBucketObjectDistributionMD() MetricDescription {
 	return MetricDescription{
 		Namespace: bucketMetricNamespace,
@@ -449,6 +462,7 @@ func getBucketObjectDistributionMD() MetricDescription {
 		Type:      histogramMetric,
 	}
 }
+
 func getInternodeFailedRequests() MetricDescription {
 	return MetricDescription{
 		Namespace: interNodeMetricNamespace,
@@ -468,6 +482,7 @@ func getInterNodeSentBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getInterNodeReceivedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: interNodeMetricNamespace,
@@ -477,6 +492,7 @@ func getInterNodeReceivedBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3SentBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -486,6 +502,7 @@ func getS3SentBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3ReceivedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -495,6 +512,7 @@ func getS3ReceivedBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RequestsInFlightMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -504,6 +522,7 @@ func getS3RequestsInFlightMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getS3RequestsInQueueMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -513,6 +532,7 @@ func getS3RequestsInQueueMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getS3RequestsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -522,6 +542,7 @@ func getS3RequestsTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RequestsErrorsMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -531,6 +552,7 @@ func getS3RequestsErrorsMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RequestsCanceledMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -540,6 +562,7 @@ func getS3RequestsCanceledMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RejectedAuthRequestsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -549,6 +572,7 @@ func getS3RejectedAuthRequestsTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RejectedHeaderRequestsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -558,6 +582,7 @@ func getS3RejectedHeaderRequestsTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RejectedTimestampRequestsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -567,6 +592,7 @@ func getS3RejectedTimestampRequestsTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getS3RejectedInvalidRequestsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -576,6 +602,7 @@ func getS3RejectedInvalidRequestsTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getCacheHitsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -585,6 +612,7 @@ func getCacheHitsTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getCacheHitsMissedTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -594,6 +622,7 @@ func getCacheHitsMissedTotalMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getCacheUsagePercentMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -603,6 +632,7 @@ func getCacheUsagePercentMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getCacheUsageInfoMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -612,6 +642,7 @@ func getCacheUsageInfoMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getCacheUsedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -621,6 +652,7 @@ func getCacheUsedBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getCacheTotalBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -630,6 +662,7 @@ func getCacheTotalBytesMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getCacheSentBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioNamespace,
@@ -639,6 +672,7 @@ func getCacheSentBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getHealObjectsTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: healMetricNamespace,
@@ -648,6 +682,7 @@ func getHealObjectsTotalMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getHealObjectsHealTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: healMetricNamespace,
@@ -667,6 +702,7 @@ func getHealObjectsFailTotalMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getHealLastActivityTimeMD() MetricDescription {
 	return MetricDescription{
 		Namespace: healMetricNamespace,
@@ -676,6 +712,7 @@ func getHealLastActivityTimeMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getNodeOnlineTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
@@ -685,6 +722,7 @@ func getNodeOnlineTotalMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getNodeOfflineTotalMD() MetricDescription {
 	return MetricDescription{
 		Namespace: clusterMetricNamespace,
@@ -694,6 +732,7 @@ func getNodeOfflineTotalMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinIOVersionMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioMetricNamespace,
@@ -703,6 +742,7 @@ func getMinIOVersionMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinIOCommitMD() MetricDescription {
 	return MetricDescription{
 		Namespace: minioMetricNamespace,
@@ -712,6 +752,7 @@ func getMinIOCommitMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getS3TTFBDistributionMD() MetricDescription {
 	return MetricDescription{
 		Namespace: s3MetricNamespace,
@@ -721,6 +762,7 @@ func getS3TTFBDistributionMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinioFDOpenMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -730,6 +772,7 @@ func getMinioFDOpenMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinioFDLimitMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -739,6 +782,7 @@ func getMinioFDLimitMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinioProcessIOWriteBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -748,6 +792,7 @@ func getMinioProcessIOWriteBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getMinioProcessIOReadBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -757,6 +802,7 @@ func getMinioProcessIOReadBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getMinioProcessIOWriteCachedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -766,6 +812,7 @@ func getMinioProcessIOWriteCachedBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getMinioProcessIOReadCachedBytesMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -775,6 +822,7 @@ func getMinioProcessIOReadCachedBytesMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getMinIOProcessSysCallRMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -784,6 +832,7 @@ func getMinIOProcessSysCallRMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getMinIOProcessSysCallWMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -793,6 +842,7 @@ func getMinIOProcessSysCallWMD() MetricDescription {
 		Type:      counterMetric,
 	}
 }
+
 func getMinIOGORoutineCountMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -802,6 +852,7 @@ func getMinIOGORoutineCountMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinIOProcessStartTimeMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -811,6 +862,7 @@ func getMinIOProcessStartTimeMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinIOProcessUptimeMD() MetricDescription {
 	return MetricDescription{
 		Namespace: nodeMetricNamespace,
@@ -820,6 +872,7 @@ func getMinIOProcessUptimeMD() MetricDescription {
 		Type:      gaugeMetric,
 	}
 }
+
 func getMinioProcMetrics() MetricsGroup {
 	return MetricsGroup{
 		id:         "MinioProcMetrics",
@@ -916,6 +969,7 @@ func getMinioProcMetrics() MetricsGroup {
 		},
 	}
 }
+
 func getGoMetrics() MetricsGroup {
 	return MetricsGroup{
 		id:         "GoMetrics",
@@ -929,6 +983,7 @@ func getGoMetrics() MetricsGroup {
 		},
 	}
 }
+
 func getS3TTFBMetric() MetricsGroup {
 	return MetricsGroup{
 		id:         "s3TTFBMetric",
@@ -1008,127 +1063,6 @@ func getNodeHealthMetrics() MetricsGroup {
 				Description: getNodeOfflineTotalMD(),
 				Value:       float64(nodesDown),
 			})
-			return
-		},
-	}
-}
-
-func getMinioHealingMetrics() MetricsGroup {
-	return MetricsGroup{
-		id:         "minioHealingMetrics",
-		cachedRead: cachedRead,
-		read: func(_ context.Context) (metrics []Metric) {
-			metrics = make([]Metric, 0, 5)
-			if !globalIsErasure {
-				return
-			}
-			bgSeq, exists := globalBackgroundHealState.getHealSequenceByToken(bgHealingUUID)
-			if !exists {
-				return
-			}
-
-			if bgSeq.lastHealActivity.IsZero() {
-				return
-			}
-
-			metrics = append(metrics, Metric{
-				Description: getHealLastActivityTimeMD(),
-				Value:       float64(time.Since(bgSeq.lastHealActivity)),
-			})
-			metrics = append(metrics, getObjectsScanned(bgSeq)...)
-			metrics = append(metrics, getScannedItems(bgSeq)...)
-			metrics = append(metrics, getFailedItems(bgSeq)...)
-			return
-		},
-	}
-}
-
-func getFailedItems(seq *healSequence) (m []Metric) {
-	m = make([]Metric, 0, 1)
-	for k, v := range seq.gethealFailedItemsMap() {
-		s := strings.Split(k, ",")
-		m = append(m, Metric{
-			Description: getHealObjectsFailTotalMD(),
-			VariableLabels: map[string]string{
-				"mount_path":    s[0],
-				"volume_status": s[1],
-			},
-			Value: float64(v),
-		})
-	}
-	return
-}
-
-func getScannedItems(seq *healSequence) (m []Metric) {
-	items := seq.getHealedItemsMap()
-	m = make([]Metric, 0, len(items))
-	for k, v := range items {
-		m = append(m, Metric{
-			Description:    getHealObjectsHealTotalMD(),
-			VariableLabels: map[string]string{"type": string(k)},
-			Value:          float64(v),
-		})
-	}
-	return
-}
-
-func getObjectsScanned(seq *healSequence) (m []Metric) {
-	items := seq.getHealedItemsMap()
-	m = make([]Metric, 0, len(items))
-	for k, v := range seq.getScannedItemsMap() {
-		m = append(m, Metric{
-			Description:    getHealObjectsTotalMD(),
-			VariableLabels: map[string]string{"type": string(k)},
-			Value:          float64(v),
-		})
-	}
-	return
-}
-func getCacheMetrics() MetricsGroup {
-	return MetricsGroup{
-		id:         "CacheMetrics",
-		cachedRead: cachedRead,
-		read: func(ctx context.Context) (metrics []Metric) {
-			metrics = make([]Metric, 0, 20)
-			cacheObjLayer := newCachedObjectLayerFn()
-			// Service not initialized yet
-			if cacheObjLayer == nil {
-				return
-			}
-			metrics = append(metrics, Metric{
-				Description: getCacheHitsTotalMD(),
-				Value:       float64(cacheObjLayer.CacheStats().getHits()),
-			})
-			metrics = append(metrics, Metric{
-				Description: getCacheHitsMissedTotalMD(),
-				Value:       float64(cacheObjLayer.CacheStats().getMisses()),
-			})
-			metrics = append(metrics, Metric{
-				Description: getCacheSentBytesMD(),
-				Value:       float64(cacheObjLayer.CacheStats().getBytesServed()),
-			})
-			for _, cdStats := range cacheObjLayer.CacheStats().GetDiskStats() {
-				metrics = append(metrics, Metric{
-					Description:    getCacheUsagePercentMD(),
-					Value:          float64(cdStats.UsagePercent),
-					VariableLabels: map[string]string{"disk": cdStats.Dir},
-				})
-				metrics = append(metrics, Metric{
-					Description:    getCacheUsageInfoMD(),
-					Value:          float64(cdStats.UsageState),
-					VariableLabels: map[string]string{"disk": cdStats.Dir, "level": cdStats.GetUsageLevelString()},
-				})
-				metrics = append(metrics, Metric{
-					Description:    getCacheUsedBytesMD(),
-					Value:          float64(cdStats.UsageSize),
-					VariableLabels: map[string]string{"disk": cdStats.Dir},
-				})
-				metrics = append(metrics, Metric{
-					Description:    getCacheTotalBytesMD(),
-					Value:          float64(cdStats.TotalCapacity),
-					VariableLabels: map[string]string{"disk": cdStats.Dir},
-				})
-			}
 			return
 		},
 	}
@@ -1320,6 +1254,7 @@ func getBucketUsageMetrics() MetricsGroup {
 		},
 	}
 }
+
 func getLocalStorageMetrics() MetricsGroup {
 	return MetricsGroup{
 		id:         "localStorageMetrics",
@@ -1360,6 +1295,7 @@ func getLocalStorageMetrics() MetricsGroup {
 		},
 	}
 }
+
 func getClusterStorageMetrics() MetricsGroup {
 	return MetricsGroup{
 		id:         "ClusterStorageMetrics",
@@ -1378,8 +1314,6 @@ func getClusterStorageMetrics() MetricsGroup {
 			// Fetch disk space info, ignore errors
 			metrics = make([]Metric, 0, 10)
 			storageInfo, _ := objLayer.StorageInfo(ctx)
-			onlineDisks, offlineDisks := getOnlineOfflineDisksStats(storageInfo.Disks)
-			totalDisks := onlineDisks.Merge(offlineDisks)
 
 			metrics = append(metrics, Metric{
 				Description: getClusterCapacityTotalBytesMD(),
@@ -1401,20 +1335,6 @@ func getClusterStorageMetrics() MetricsGroup {
 				Value:       GetTotalUsableCapacityFree(storageInfo.Disks, storageInfo),
 			})
 
-			metrics = append(metrics, Metric{
-				Description: getClusterDisksOfflineTotalMD(),
-				Value:       float64(offlineDisks.Sum()),
-			})
-
-			metrics = append(metrics, Metric{
-				Description: getClusterDisksOnlineTotalMD(),
-				Value:       float64(onlineDisks.Sum()),
-			})
-
-			metrics = append(metrics, Metric{
-				Description: getClusterDisksTotalMD(),
-				Value:       float64(totalDisks.Sum()),
-			})
 			return
 		},
 	}
@@ -1487,10 +1407,8 @@ func (c *minioClusterCollector) Collect(out chan<- prometheus.Metric) {
 	}
 
 	// Call peer api to fetch metrics
-	peerCh := globalNotificationSys.GetClusterMetrics(GlobalContext)
 	selfCh := ReportMetrics(GlobalContext, GetAllGenerators)
-	wg.Add(2)
-	go publish(peerCh)
+	wg.Add(1)
 	go publish(selfCh)
 	wg.Wait()
 }

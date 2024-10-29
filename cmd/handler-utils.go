@@ -19,7 +19,6 @@ package cmd
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -460,13 +459,6 @@ func methodNotAllowedHandler(api string) func(w http.ResponseWriter, r *http.Req
 				Description:    desc,
 				HTTPStatusCode: http.StatusUpgradeRequired,
 			}, r.URL)
-		case strings.HasPrefix(r.URL.Path, lockRESTPrefix):
-			desc := fmt.Sprintf("Server expects 'lock' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", lockRESTVersion, version, ReleaseTag)
-			writeErrorResponseString(r.Context(), w, APIError{
-				Code:           "XMinioLockVersionMismatch",
-				Description:    desc,
-				HTTPStatusCode: http.StatusUpgradeRequired,
-			}, r.URL)
 		case strings.HasPrefix(r.URL.Path, adminPathPrefix):
 			var desc string
 			if version == "v1" {
@@ -513,13 +505,6 @@ func errorResponseHandler(w http.ResponseWriter, r *http.Request) {
 			Description:    desc,
 			HTTPStatusCode: http.StatusUpgradeRequired,
 		}, r.URL)
-	case strings.HasPrefix(r.URL.Path, lockRESTPrefix):
-		desc := fmt.Sprintf("Server expects 'lock' API version '%s', instead found '%s' - *rolling upgrade is not allowed* - please make sure all servers are running the same MinIO version (%s)", lockRESTVersion, version, ReleaseTag)
-		writeErrorResponseString(r.Context(), w, APIError{
-			Code:           "XMinioLockVersionMismatch",
-			Description:    desc,
-			HTTPStatusCode: http.StatusUpgradeRequired,
-		}, r.URL)
 	case strings.HasPrefix(r.URL.Path, adminPathPrefix):
 		var desc string
 		if version == "v1" {
@@ -547,41 +532,5 @@ func errorResponseHandler(w http.ResponseWriter, r *http.Request) {
 
 // gets host name for current node
 func getHostName(r *http.Request) (hostName string) {
-	if globalIsDistErasure {
-		hostName = globalLocalNodeName
-	} else {
-		hostName = r.Host
-	}
-	return
-}
-
-// Proxy any request to an endpoint.
-func proxyRequest(ctx context.Context, w http.ResponseWriter, r *http.Request, ep ProxyEndpoint) (success bool) {
-	success = true
-
-	// Make sure we remove any existing headers before
-	// proxying the request to another node.
-	for k := range w.Header() {
-		w.Header().Del(k)
-	}
-
-	f := handlers.NewForwarder(&handlers.Forwarder{
-		PassHost:     true,
-		RoundTripper: ep.Transport,
-		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
-			success = false
-			if err != nil && !errors.Is(err, context.Canceled) {
-				logger.LogIf(GlobalContext, err)
-			}
-		},
-	})
-
-	r.URL.Scheme = "http"
-	if globalIsTLS {
-		r.URL.Scheme = "https"
-	}
-
-	r.URL.Host = ep.Host
-	f.ServeHTTP(w, r)
-	return
+	return r.Host
 }

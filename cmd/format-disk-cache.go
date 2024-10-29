@@ -29,8 +29,8 @@ import (
 	"strings"
 
 	jsoniter "github.com/json-iterator/go"
+
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/sio"
 )
 
 const (
@@ -358,22 +358,16 @@ func migrateCacheData(ctx context.Context, c *diskCache, bucket, object, oldfile
 	var reader io.Reader = readCloser
 
 	actualSize := uint64(st.Size())
-	if globalCacheKMS != nil {
-		reader, err = newCacheEncryptReader(readCloser, bucket, object, metadata)
-		if err != nil {
-			return err
-		}
-		actualSize, _ = sio.EncryptedSize(uint64(st.Size()))
-	}
 	_, _, err = c.bitrotWriteToCache(destDir, cacheDataFile, reader, actualSize)
 	return err
 }
 
 // migrate cache contents from old cacheFS format to new backend format
 // new format is flat
-//  sha(bucket,object)/  <== dir name
-//      - part.1         <== data
-//      - cache.json     <== metadata
+//
+//	sha(bucket,object)/  <== dir name
+//	    - part.1         <== data
+//	    - cache.json     <== metadata
 func migrateOldCache(ctx context.Context, c *diskCache) error {
 	oldCacheBucketsPath := path.Join(c.dir, minioMetaBucket, "buckets")
 	cacheFormatPath := pathJoin(c.dir, minioMetaBucket, formatConfigFile)

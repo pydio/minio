@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/minio/cli"
+
 	miniogo "github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/encrypt"
@@ -109,6 +110,7 @@ func (g *S3) Name() string {
 }
 
 const letterBytes = "abcdefghijklmnopqrstuvwxyz01234569"
+
 const (
 	letterIdxBits = 6                    // 6 bits to represent a letter index
 	letterIdxMask = 1<<letterIdxBits - 1 // All 1-bits, as many as letterIdxBits
@@ -237,16 +239,6 @@ func (g *S3) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) 
 		},
 	}
 
-	// Enables single encryption of KMS is configured.
-	if minio.GlobalKMS != nil {
-		encS := s3EncObjects{s}
-
-		// Start stale enc multipart uploads cleanup routine.
-		go encS.cleanupStaleEncMultipartUploads(minio.GlobalContext,
-			minio.GlobalStaleUploadsCleanupInterval, minio.GlobalStaleUploadsExpiry)
-
-		return &encS, nil
-	}
 	return &s, nil
 }
 
@@ -771,7 +763,7 @@ func (l *s3Objects) IsCompressionSupported() bool {
 
 // IsEncryptionSupported returns whether server side encryption is implemented for this layer.
 func (l *s3Objects) IsEncryptionSupported() bool {
-	return minio.GlobalKMS != nil || minio.GlobalGatewaySSE.IsSet()
+	return false
 }
 
 func (l *s3Objects) IsTaggingSupported() bool {

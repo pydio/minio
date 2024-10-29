@@ -27,8 +27,8 @@ import (
 	"sync"
 
 	"github.com/fatih/structs"
+
 	"github.com/minio/minio/pkg/safe"
-	etcd "go.etcd.io/etcd/client/v3"
 )
 
 // Config - generic config interface functions
@@ -45,7 +45,6 @@ type Config interface {
 // config - implements quick.Config interface
 type config struct {
 	data interface{}
-	clnt *etcd.Client
 	lock *sync.RWMutex
 }
 
@@ -68,10 +67,6 @@ func (d config) String() string {
 func (d config) Save(filename string) error {
 	d.lock.Lock()
 	defer d.lock.Unlock()
-
-	if d.clnt != nil {
-		return saveFileConfigEtcd(filename, d.clnt, d.data)
-	}
 
 	// Backup if given file exists
 	oldData, err := ioutil.ReadFile(filename)
@@ -98,9 +93,6 @@ func (d config) Save(filename string) error {
 func (d config) Load(filename string) error {
 	d.lock.Lock()
 	defer d.lock.Unlock()
-	if d.clnt != nil {
-		return loadFileConfigEtcd(filename, d.clnt, d.data)
-	}
 	return loadFileConfig(filename, d.data)
 }
 
@@ -189,9 +181,9 @@ func writeFile(filename string, data []byte) error {
 }
 
 // GetVersion - extracts the version information.
-func GetVersion(filename string, clnt *etcd.Client) (version string, err error) {
+func GetVersion(filename string) (version string, err error) {
 	var qc Config
-	qc, err = LoadConfig(filename, clnt, &struct {
+	qc, err = LoadConfig(filename, &struct {
 		Version string
 	}{})
 	if err != nil {
@@ -201,8 +193,8 @@ func GetVersion(filename string, clnt *etcd.Client) (version string, err error) 
 }
 
 // LoadConfig - loads json config from filename for the a given struct data
-func LoadConfig(filename string, clnt *etcd.Client, data interface{}) (qc Config, err error) {
-	qc, err = NewConfig(data, clnt)
+func LoadConfig(filename string, data interface{}) (qc Config, err error) {
+	qc, err = NewConfig(data)
 	if err != nil {
 		return nil, err
 	}
@@ -210,12 +202,12 @@ func LoadConfig(filename string, clnt *etcd.Client, data interface{}) (qc Config
 }
 
 // SaveConfig - saves given configuration data into given file as JSON.
-func SaveConfig(data interface{}, filename string, clnt *etcd.Client) (err error) {
+func SaveConfig(data interface{}, filename string) (err error) {
 	if err = CheckData(data); err != nil {
 		return err
 	}
 	var qc Config
-	qc, err = NewConfig(data, clnt)
+	qc, err = NewConfig(data)
 	if err != nil {
 		return err
 	}
@@ -224,14 +216,13 @@ func SaveConfig(data interface{}, filename string, clnt *etcd.Client) (err error
 
 // NewConfig loads config from etcd client if provided, otherwise loads from a local filename.
 // fails when all else fails.
-func NewConfig(data interface{}, clnt *etcd.Client) (cfg Config, err error) {
+func NewConfig(data interface{}) (cfg Config, err error) {
 	if err := CheckData(data); err != nil {
 		return nil, err
 	}
 
 	d := new(config)
 	d.data = data
-	d.clnt = clnt
 	d.lock = new(sync.RWMutex)
 	return d, nil
 }

@@ -27,13 +27,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cespare/xxhash/v2"
+	xxhash "github.com/cespare/xxhash/v2"
 	"github.com/klauspost/compress/zstd"
+	"github.com/tinylib/msgp/msgp"
+
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/bucket/lifecycle"
 	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/madmin"
-	"github.com/tinylib/msgp/msgp"
 )
 
 //go:generate msgp -file $GOFILE -unexported
@@ -533,7 +534,6 @@ func (d *dataUsageCache) load(ctx context.Context, store objectIO, name string) 
 		switch err.(type) {
 		case ObjectNotFound:
 		case BucketNotFound:
-		case InsufficientReadQuorum:
 		default:
 			return toObjectErr(err, dataUsageBucket, name)
 		}

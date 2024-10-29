@@ -19,9 +19,107 @@ package cmd
 import (
 	"errors"
 	"os"
+	"path/filepath"
 	"runtime"
 	"syscall"
+
+	humanize "github.com/dustin/go-humanize"
+
+	"github.com/minio/minio/pkg/disk"
 )
+
+const (
+	nullVersionID  = "null"
+	blockSizeLarge = 2 * humanize.MiByte   // Default r/w block size for larger objects.
+	blockSizeSmall = 128 * humanize.KiByte // Default r/w block size for smaller objects.
+)
+
+// checkPathLength - returns error if given path name length more than 255
+func checkPathLength(pathName string) error {
+	// Apple OS X path length is limited to 1016
+	if runtime.GOOS == "darwin" && len(pathName) > 1016 {
+		return errFileNameTooLong
+	}
+
+	// Disallow more than 1024 characters on windows, there
+	// are no known name_max limits on Windows.
+	if runtime.GOOS == "windows" && len(pathName) > 1024 {
+		return errFileNameTooLong
+	}
+
+	// On Unix we reject paths if they are just '.', '..' or '/'
+	if pathName == "." || pathName == ".." || pathName == slashSeparator {
+		return errFileAccessDenied
+	}
+
+	// Check each path segment length is > 255 on all Unix
+	// platforms, look for this value as NAME_MAX in
+	// /usr/include/linux/limits.h
+	var count int64
+	for _, p := range pathName {
+		switch p {
+		case '/':
+			count = 0 // Reset
+		case '\\':
+			if runtime.GOOS == globalWindowsOSName {
+				count = 0
+			}
+		default:
+			count++
+			if count > 255 {
+				return errFileNameTooLong
+			}
+		}
+	} // Success.
+	return nil
+}
+
+func getValidPath(path string) (string, error) {
+	if path == "" {
+		return path, errInvalidArgument
+	}
+
+	var err error
+	// Disallow relative paths, figure out absolute paths.
+	path, err = filepath.Abs(path)
+	if err != nil {
+		return path, err
+	}
+
+	fi, err := Lstat(path)
+	if err != nil && !osIsNotExist(err) {
+		return path, err
+	}
+	if osIsNotExist(err) {
+		// Disk not found create it.
+		if err = reliableMkdirAll(path, 0777); err != nil {
+			return path, err
+		}
+	}
+	if fi != nil && !fi.IsDir() {
+		return path, errDiskNotDir
+	}
+
+	return path, nil
+}
+
+// getDiskInfo returns given disk information.
+func getDiskInfo(diskPath string) (di disk.Info, err error) {
+	if err = checkPathLength(diskPath); err == nil {
+		di, err = disk.GetInfo(diskPath)
+	}
+
+	switch {
+	case osIsNotExist(err):
+		err = errDiskNotFound
+	case isSysErrTooLong(err):
+		err = errFileNameTooLong
+	case isSysErrIO(err):
+		err = errFaultyDisk
+	}
+
+	return di, err
+}
 
 // Function not implemented error
 func isSysErrNoSys(err error) bool {

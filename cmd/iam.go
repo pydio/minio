@@ -29,6 +29,7 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
@@ -44,10 +45,6 @@ type UsersSysType string
 const (
 	// This mode uses the internal users system in MinIO.
 	MinIOUsersSysType UsersSysType = "MinIOUsersSys"
-
-	// This mode uses users and groups from a configured LDAP
-	// server.
-	LDAPUsersSysType UsersSysType = "LDAPUsersSys"
 )
 
 const (
@@ -290,11 +287,6 @@ func (sys *IAMSys) LoadGroup(objAPI ObjectLayer, group string) error {
 		return errServerNotInitialized
 	}
 
-	if globalEtcdClient != nil {
-		// Watch APIs cover this case, so nothing to do.
-		return nil
-	}
-
 	sys.store.lock()
 	defer sys.store.unlock()
 
@@ -334,12 +326,7 @@ func (sys *IAMSys) LoadPolicy(objAPI ObjectLayer, policyName string) error {
 	sys.store.lock()
 	defer sys.store.unlock()
 
-	if globalEtcdClient == nil {
-		return sys.store.loadPolicyDoc(context.Background(), policyName, sys.iamPolicyDocsMap)
-	}
-
-	// When etcd is set, we use watch APIs so this code is not needed.
-	return nil
+	return sys.store.loadPolicyDoc(context.Background(), policyName, sys.iamPolicyDocsMap)
 }
 
 // LoadPolicyMapping - loads the mapped policy for a user or group
@@ -352,18 +339,16 @@ func (sys *IAMSys) LoadPolicyMapping(objAPI ObjectLayer, userOrGroup string, isG
 	sys.store.lock()
 	defer sys.store.unlock()
 
-	if globalEtcdClient == nil {
-		var err error
-		if isGroup {
-			err = sys.store.loadMappedPolicy(context.Background(), userOrGroup, regularUser, isGroup, sys.iamGroupPolicyMap)
-		} else {
-			err = sys.store.loadMappedPolicy(context.Background(), userOrGroup, regularUser, isGroup, sys.iamUserPolicyMap)
-		}
+	var err error
+	if isGroup {
+		err = sys.store.loadMappedPolicy(context.Background(), userOrGroup, regularUser, isGroup, sys.iamGroupPolicyMap)
+	} else {
+		err = sys.store.loadMappedPolicy(context.Background(), userOrGroup, regularUser, isGroup, sys.iamUserPolicyMap)
+	}
 
-		// Ignore policy not mapped error
-		if err != nil && err != errNoSuchPolicy {
-			return err
-		}
+	// Ignore policy not mapped error
+	if err != nil && err != errNoSuchPolicy {
+		return err
 	}
 	// When etcd is set, we use watch APIs so this code is not needed.
 	return nil
@@ -378,18 +363,15 @@ func (sys *IAMSys) LoadUser(objAPI ObjectLayer, accessKey string, userType IAMUs
 	sys.store.lock()
 	defer sys.store.unlock()
 
-	if globalEtcdClient == nil {
-		err := sys.store.loadUser(context.Background(), accessKey, userType, sys.iamUsersMap)
-		if err != nil {
-			return err
-		}
-		err = sys.store.loadMappedPolicy(context.Background(), accessKey, userType, false, sys.iamUserPolicyMap)
-		// Ignore policy not mapped error
-		if err != nil && err != errNoSuchPolicy {
-			return err
-		}
+	err := sys.store.loadUser(context.Background(), accessKey, userType, sys.iamUsersMap)
+	if err != nil {
+		return err
 	}
-	// When etcd is set, we use watch APIs so this code is not needed.
+	err = sys.store.loadMappedPolicy(context.Background(), accessKey, userType, false, sys.iamUserPolicyMap)
+	// Ignore policy not mapped error
+	if err != nil && err != errNoSuchPolicy {
+		return err
+	}
 	return nil
 }
 
@@ -402,11 +384,9 @@ func (sys *IAMSys) LoadServiceAccount(accessKey string) error {
 	sys.store.lock()
 	defer sys.store.unlock()
 
-	if globalEtcdClient == nil {
-		err := sys.store.loadUser(context.Background(), accessKey, srvAccUser, sys.iamUsersMap)
-		if err != nil {
-			return err
-		}
+	err := sys.store.loadUser(context.Background(), accessKey, srvAccUser, sys.iamUsersMap)
+	if err != nil {
+		return err
 	}
 	// When etcd is set, we use watch APIs so this code is not needed.
 	return nil
@@ -421,16 +401,7 @@ func (sys *IAMSys) doIAMConfigMigration(ctx context.Context) error {
 func (sys *IAMSys) InitStore(objAPI ObjectLayer) {
 	sys.Lock()
 	defer sys.Unlock()
-
-	if globalEtcdClient == nil {
-		sys.store = newIAMObjectStore(objAPI)
-	} else {
-		sys.store = newIAMEtcdStore()
-	}
-
-	if globalLDAPConfig.Enabled {
-		sys.EnableLDAPSys()
-	}
+	sys.store = newIAMObjectStore(objAPI)
 }
 
 // Initialized check if IAM is initialized
@@ -588,23 +559,6 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer) {
 			logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. trying to acquire lock")
 			time.Sleep(time.Duration(r.Float64() * float64(5*time.Second)))
 			continue
-		}
-
-		if globalEtcdClient != nil {
-			// ****  WARNING ****
-			// Migrating to encrypted backend on etcd should happen before initialization of
-			// IAM sub-system, make sure that we do not move the above codeblock elsewhere.
-			if err := migrateIAMConfigsEtcdToEncrypted(ctx, globalEtcdClient); err != nil {
-				txnLk.Unlock()
-				logger.LogIf(ctx, fmt.Errorf("Unable to decrypt an encrypted ETCD backend for IAM users and policies: %w", err))
-				logger.LogIf(ctx, errors.New("IAM sub-system is partially initialized, some users may not be available"))
-				return
-			}
-		}
-
-		// These messages only meant primarily for distributed setup, so only log during distributed setup.
-		if globalIsDistErasure {
-			logger.Info("Waiting for all MinIO IAM sub-system to be initialized.. lock acquired")
 		}
 
 		// Migrate IAM configuration, if necessary.
@@ -847,7 +801,7 @@ func (sys *IAMSys) SetTempUser(accessKey string, cred auth.Credentials, policyNa
 	// If OPA is not set we honor any policy claims for this
 	// temporary user which match with pre-configured canned
 	// policies for this server.
-	if globalPolicyOPA == nil && policyName != "" {
+	if policyName != "" {
 		mp := newMappedPolicy(policyName)
 		combinedPolicy := sys.GetCombinedPolicy(mp.toSlice()...)
 
@@ -1701,10 +1655,6 @@ func (sys *IAMSys) PolicyDBSet(name, policy string, isGroup bool) error {
 	sys.store.lock()
 	defer sys.store.unlock()
 
-	if sys.usersSysType == LDAPUsersSysType {
-		return sys.policyDBSet(name, policy, stsUser, isGroup)
-	}
-
 	return sys.policyDBSet(name, policy, regularUser, isGroup)
 }
 
@@ -1729,12 +1679,6 @@ func (sys *IAMSys) policyDBSet(name, policyName string, userType IAMUserType, is
 
 	// Handle policy mapping removal
 	if policyName == "" {
-		if sys.usersSysType == LDAPUsersSysType {
-			// Add a fallback removal towards previous content that may come back
-			// as a ghost user due to lack of delete, this change occurred
-			// introduced in PR #11840
-			sys.store.deleteMappedPolicy(context.Background(), name, regularUser, false)
-		}
 		err := sys.store.deleteMappedPolicy(context.Background(), name, userType, isGroup)
 		if err != nil && err != errNoSuchPolicy {
 			return err
@@ -1970,71 +1914,10 @@ func (sys *IAMSys) IsAllowedServiceAccount(args iampolicy.Args, parent string) b
 	return combinedPolicy.IsAllowed(parentArgs) && subPolicy.IsAllowed(parentArgs)
 }
 
-// IsAllowedLDAPSTS - checks for LDAP specific claims and values
-func (sys *IAMSys) IsAllowedLDAPSTS(args iampolicy.Args, parentUser string) bool {
-	parentInClaimIface, ok := args.Claims[ldapUser]
-	if ok {
-		parentInClaim, ok := parentInClaimIface.(string)
-		if !ok {
-			// ldap parentInClaim name is not a string reject it.
-			return false
-		}
-
-		if parentInClaim != parentUser {
-			// ldap claim has been modified maliciously reject it.
-			return false
-		}
-	} else {
-		// no ldap parentInClaim claim present reject it.
-		return false
-	}
-
-	// Check policy for this LDAP user.
-	ldapPolicies, err := sys.PolicyDBGet(parentUser, false, args.Groups...)
-	if err != nil {
-		return false
-	}
-
-	if len(ldapPolicies) == 0 {
-		return false
-	}
-
-	var availablePolicies []iampolicy.Policy
-
-	// Policies were found, evaluate all of them.
-	sys.store.rlock()
-	for _, pname := range ldapPolicies {
-		p, found := sys.iamPolicyDocsMap[pname]
-		if found {
-			availablePolicies = append(availablePolicies, p)
-		}
-	}
-	sys.store.runlock()
-
-	if len(availablePolicies) == 0 {
-		return false
-	}
-
-	combinedPolicy := availablePolicies[0]
-	for i := 1; i < len(availablePolicies); i++ {
-		combinedPolicy.Statements =
-			append(combinedPolicy.Statements,
-				availablePolicies[i].Statements...)
-	}
-
-	return combinedPolicy.IsAllowed(args)
-}
-
 // IsAllowedSTS is meant for STS based temporary credentials,
 // which implements claims validation and verification other than
 // applying policies.
 func (sys *IAMSys) IsAllowedSTS(args iampolicy.Args, parentUser string) bool {
-	// If it is an LDAP request, check that user and group
-	// policies allow the request.
-	if sys.usersSysType == LDAPUsersSysType {
-		return sys.IsAllowedLDAPSTS(args, parentUser)
-	}
-
 	policies, ok := args.GetPolicies(iamPolicyClaimNameOpenID())
 	if !ok {
 		// When claims are set, it should have a policy claim field.
@@ -2142,15 +2025,6 @@ func (sys *IAMSys) GetCombinedPolicy(policies ...string) iampolicy.Policy {
 
 // IsAllowed - checks given policy args is allowed to continue the Rest API.
 func (sys *IAMSys) IsAllowed(args iampolicy.Args) bool {
-	// If opa is configured, use OPA always.
-	if globalPolicyOPA != nil {
-		ok, err := globalPolicyOPA.IsAllowed(args)
-		if err != nil {
-			logger.LogIf(GlobalContext, err)
-		}
-		return ok
-	}
-
 	// Policies don't apply to the owner.
 	if args.IsOwner {
 		return true
@@ -2250,11 +2124,6 @@ func (sys *IAMSys) removeGroupFromMembershipsMap(group string) {
 	}
 }
 
-// EnableLDAPSys - enable ldap system users type.
-func (sys *IAMSys) EnableLDAPSys() {
-	sys.usersSysType = LDAPUsersSysType
-}
-
 // NewIAMSys - creates new config system object.
 func NewIAMSys() *IAMSys {
 	return &IAMSys{
@@ -2268,3 +2137,9 @@ func NewIAMSys() *IAMSys {
 		configLoaded:            make(chan struct{}),
 	}
 }
+
+const (
+
+	// JWT claim to check the parent user
+	parentClaim = "parent"
+)

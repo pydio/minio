@@ -48,19 +48,6 @@ type ReqInfo struct {
 	sync.RWMutex
 }
 
-// NewReqInfo :
-func NewReqInfo(remoteHost, userAgent, deploymentID, requestID, api, bucket, object string) *ReqInfo {
-	req := ReqInfo{}
-	req.RemoteHost = remoteHost
-	req.UserAgent = userAgent
-	req.API = api
-	req.DeploymentID = deploymentID
-	req.RequestID = requestID
-	req.BucketName = bucket
-	req.ObjectName = object
-	return &req
-}
-
 // AppendTags - appends key/val to ReqInfo.tags
 func (r *ReqInfo) AppendTags(key string, val interface{}) *ReqInfo {
 	if r == nil {

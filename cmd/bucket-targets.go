@@ -104,22 +104,7 @@ func (sys *BucketTargetSys) SetTarget(ctx context.Context, bucket string, tgt *m
 		return BucketRemoteConnectionErr{Bucket: tgt.TargetBucket, Err: err}
 	}
 	if tgt.Type == madmin.ReplicationService {
-		if !globalIsErasure {
-			return NotImplemented{Message: "Replication is not implemented in " + getMinioMode()}
-		}
-		if !globalBucketVersioningSys.Enabled(bucket) {
-			return BucketReplicationSourceNotVersioned{Bucket: bucket}
-		}
-		vcfg, err := clnt.GetBucketVersioning(ctx, tgt.TargetBucket)
-		if err != nil {
-			return BucketRemoteConnectionErr{Bucket: tgt.TargetBucket, Err: err}
-		}
-		if vcfg.Status != string(versioning.Enabled) {
-			return BucketRemoteTargetNotVersioned{Bucket: tgt.TargetBucket}
-		}
-		if tgt.ReplicationSync && tgt.BandwidthLimit > 0 {
-			return NotImplemented{Message: "Synchronous replication does not support bandwidth limits"}
-		}
+		return NotImplemented{Message: "Replication is not implemented in " + getMinioMode()}
 	}
 	if tgt.Type == madmin.ILMService {
 		if globalBucketVersioningSys.Enabled(bucket) {
@@ -182,25 +167,7 @@ func (sys *BucketTargetSys) RemoveTarget(ctx context.Context, bucket, arnStr str
 		return BucketRemoteArnInvalid{Bucket: bucket}
 	}
 	if arn.Type == madmin.ReplicationService {
-		if !globalIsErasure {
-			return NotImplemented{Message: "Replication is not implemented in " + getMinioMode()}
-		}
-		// reject removal of remote target if replication configuration is present
-		rcfg, err := getReplicationConfig(ctx, bucket)
-		if err == nil && rcfg.RoleArn == arnStr {
-			if _, ok := sys.arnRemotesMap[arnStr]; ok {
-				return BucketRemoteRemoveDisallowed{Bucket: bucket}
-			}
-		}
-	}
-	if arn.Type == madmin.ILMService {
-		// reject removal of remote target if lifecycle transition uses this arn
-		config, err := globalBucketMetadataSys.GetLifecycleConfig(bucket)
-		if err == nil && transitionSCInUse(ctx, config, bucket, arnStr) {
-			if _, ok := sys.arnRemotesMap[arnStr]; ok {
-				return BucketRemoteRemoveDisallowed{Bucket: bucket}
-			}
-		}
+		return NotImplemented{Message: "Replication is not implemented in " + getMinioMode()}
 	}
 
 	// delete ARN type from list of matching targets
@@ -355,6 +322,7 @@ func (sys *BucketTargetSys) load(ctx context.Context, buckets []BucketInfo, objA
 
 // getRemoteTargetInstanceTransport contains a singleton roundtripper.
 var getRemoteTargetInstanceTransport http.RoundTripper
+
 var getRemoteTargetInstanceTransportOnce sync.Once
 
 // Returns a minio-go Client configured to access remote host described in replication target config.

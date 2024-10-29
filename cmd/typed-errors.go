@@ -18,6 +18,9 @@ package cmd
 
 import (
 	"errors"
+
+	"github.com/minio/minio/cmd/rest"
+	xnet "github.com/minio/minio/pkg/net"
 )
 
 // errInvalidArgument means that input argument is invalid.
@@ -104,3 +107,13 @@ var errLockedObject = errors.New("Object is WORM protected and cannot be overwri
 
 // error returned when upload id not found
 var errUploadIDNotFound = errors.New("Specified Upload ID is not found")
+
+func isNetworkError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if nerr, ok := err.(*rest.NetworkError); ok {
+		return xnet.IsNetworkOrHostDown(nerr.Err, false)
+	}
+	return false
+}

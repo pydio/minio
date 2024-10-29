@@ -21,9 +21,10 @@ import (
 	"net/http"
 
 	"github.com/gorilla/mux"
+	"github.com/rs/cors"
+
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/pkg/wildcard"
-	"github.com/rs/cors"
 )
 
 func newHTTPServerFn() *xhttp.Server {
@@ -44,18 +45,6 @@ func newObjectLayerFn() ObjectLayer {
 	return globalObjectAPI
 }
 
-func newCachedObjectLayerFn() CacheObjectLayer {
-	globalObjLayerMutex.RLock()
-	defer globalObjLayerMutex.RUnlock()
-	return globalCacheObjectAPI
-}
-
-func setCacheObjectLayer(c CacheObjectLayer) {
-	globalObjLayerMutex.Lock()
-	globalCacheObjectAPI = c
-	globalObjLayerMutex.Unlock()
-}
-
 func setObjectLayer(o ObjectLayer) {
 	globalObjLayerMutex.Lock()
 	globalObjectAPI = o
@@ -64,8 +53,8 @@ func setObjectLayer(o ObjectLayer) {
 
 // objectAPIHandler implements and provides http handlers for S3 API.
 type objectAPIHandlers struct {
+	*Globals
 	ObjectAPI func() ObjectLayer
-	CacheAPI  func() CacheObjectLayer
 }
 
 // getHost tries its best to return the request host.
@@ -176,11 +165,11 @@ func rejectUnsupportedAPIs(router *mux.Router) {
 }
 
 // registerAPIRouter - registers S3 compatible APIs.
-func registerAPIRouter(router *mux.Router) {
+func registerAPIRouter(globals *Globals, router *mux.Router) {
 	// Initialize API.
 	api := objectAPIHandlers{
+		Globals:   globals,
 		ObjectAPI: newObjectLayerFn,
-		CacheAPI:  newCachedObjectLayerFn,
 	}
 
 	// API Router
@@ -239,12 +228,7 @@ func registerAPIRouter(router *mux.Router) {
 		// AbortMultipartUpload
 		router.Methods(http.MethodDelete).Path("/{object:.+}").HandlerFunc(
 			collectAPIStats("abortmultipartupload", maxClients(httpTraceAll(api.AbortMultipartUploadHandler)))).Queries("uploadId", "{uploadId:.*}")
-		// GetObjectACL - this is a dummy call.
-		router.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(
-			collectAPIStats("getobjectacl", maxClients(httpTraceHdrs(api.GetObjectACLHandler)))).Queries("acl", "")
-		// PutObjectACL - this is a dummy call.
-		router.Methods(http.MethodPut).Path("/{object:.+}").HandlerFunc(
-			collectAPIStats("putobjectacl", maxClients(httpTraceHdrs(api.PutObjectACLHandler)))).Queries("acl", "")
+
 		// GetObjectTagging
 		router.Methods(http.MethodGet).Path("/{object:.+}").HandlerFunc(
 			collectAPIStats("getobjecttagging", maxClients(httpTraceHdrs(api.GetObjectTaggingHandler)))).Queries("tagging", "")
@@ -321,13 +305,6 @@ func registerAPIRouter(router *mux.Router) {
 		router.Methods(http.MethodGet).HandlerFunc(
 			collectAPIStats("listennotification", maxClients(httpTraceAll(api.ListenNotificationHandler)))).Queries("events", "{events:.*}")
 
-		// Dummy Bucket Calls
-		// GetBucketACL -- this is a dummy call.
-		router.Methods(http.MethodGet).HandlerFunc(
-			collectAPIStats("getbucketacl", maxClients(httpTraceAll(api.GetBucketACLHandler)))).Queries("acl", "")
-		// PutBucketACL -- this is a dummy call.
-		router.Methods(http.MethodPut).HandlerFunc(
-			collectAPIStats("putbucketacl", maxClients(httpTraceAll(api.PutBucketACLHandler)))).Queries("acl", "")
 		// GetBucketCors - this is a dummy call.
 		router.Methods(http.MethodGet).HandlerFunc(
 			collectAPIStats("getbucketcors", maxClients(httpTraceAll(api.GetBucketCorsHandler)))).Queries("cors", "")

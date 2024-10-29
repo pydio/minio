@@ -147,24 +147,6 @@ func toObjectErr(err error, params ...string) error {
 			apiErr.Object = decodeDirObject(params[1])
 		}
 		return apiErr
-	case errErasureReadQuorum:
-		apiErr := InsufficientReadQuorum{}
-		if len(params) >= 1 {
-			apiErr.Bucket = params[0]
-		}
-		if len(params) >= 2 {
-			apiErr.Object = decodeDirObject(params[1])
-		}
-		return apiErr
-	case errErasureWriteQuorum:
-		apiErr := InsufficientWriteQuorum{}
-		if len(params) >= 1 {
-			apiErr.Bucket = params[0]
-		}
-		if len(params) >= 2 {
-			apiErr.Object = decodeDirObject(params[1])
-		}
-		return apiErr
 	case io.ErrUnexpectedEOF, io.ErrShortWrite:
 		return IncompleteBody{}
 	case context.Canceled, context.DeadlineExceeded:
@@ -192,30 +174,6 @@ type SlowDown struct{}
 
 func (e SlowDown) Error() string {
 	return "Please reduce your request rate"
-}
-
-// InsufficientReadQuorum storage cannot satisfy quorum for read operation.
-type InsufficientReadQuorum GenericError
-
-func (e InsufficientReadQuorum) Error() string {
-	return "Storage resources are insufficient for the read operation " + e.Bucket + "/" + e.Object
-}
-
-// Unwrap the error.
-func (e InsufficientReadQuorum) Unwrap() error {
-	return errErasureReadQuorum
-}
-
-// InsufficientWriteQuorum storage cannot satisfy quorum for write operation.
-type InsufficientWriteQuorum GenericError
-
-func (e InsufficientWriteQuorum) Error() string {
-	return "Storage resources are insufficient for the write operation " + e.Bucket + "/" + e.Object
-}
-
-// Unwrap the error.
-func (e InsufficientWriteQuorum) Unwrap() error {
-	return errErasureWriteQuorum
 }
 
 // GenericError - generic object layer error.
@@ -311,7 +269,7 @@ func (e ObjectExistsAsDirectory) Error() string {
 	return "Object exists on : " + e.Bucket + " as directory " + e.Object
 }
 
-//PrefixAccessDenied object access is denied.
+// PrefixAccessDenied object access is denied.
 type PrefixAccessDenied GenericError
 
 func (e PrefixAccessDenied) Error() string {

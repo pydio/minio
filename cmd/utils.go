@@ -42,13 +42,13 @@ import (
 
 	humanize "github.com/dustin/go-humanize"
 	"github.com/gorilla/mux"
+
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/cmd/rest"
 	"github.com/minio/minio/pkg/certs"
 	"github.com/minio/minio/pkg/handlers"
 	"github.com/minio/minio/pkg/madmin"
-	"golang.org/x/net/http2"
 )
 
 const (
@@ -95,19 +95,6 @@ func path2BucketObject(s string) (bucket, prefix string) {
 	return path2BucketObjectWithBasePath("", s)
 }
 
-func getReadQuorum(drive int) int {
-	return drive - getDefaultParityBlocks(drive)
-}
-
-func getWriteQuorum(drive int) int {
-	parity := getDefaultParityBlocks(drive)
-	quorum := drive - parity
-	if quorum == parity {
-		quorum++
-	}
-	return quorum
-}
-
 // cloneMSS will clone a map[string]string.
 // If input is nil an empty map is returned, not nil.
 func cloneMSS(v map[string]string) map[string]string {
@@ -150,7 +137,7 @@ func hasContentMD5(h http.Header) bool {
 	return ok
 }
 
-/// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
+// / http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 const (
 	// Maximum object size per PUT request is 5TB.
 	// This is a divergence from S3 limit on purpose to support
@@ -387,6 +374,7 @@ type minioProfiler interface {
 
 // Global profiler to be used by service go-routine.
 var globalProfiler map[string]minioProfiler
+
 var globalProfilerMu sync.Mutex
 
 // dump the request into a string in JSON format.
@@ -444,117 +432,6 @@ func ToS3ETag(etag string) string {
 	}
 
 	return etag
-}
-
-func newInternodeHTTPTransport(tlsConfig *tls.Config, dialTimeout time.Duration) func() http.RoundTripper {
-	// For more details about various values used here refer
-	// https://golang.org/pkg/net/http/#Transport documentation
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           xhttp.DialContextWithDNSCache(globalDNSCache, xhttp.NewInternodeDialContext(dialTimeout)),
-		MaxIdleConnsPerHost:   1024,
-		WriteBufferSize:       32 << 10, // 32KiB moving up from 4KiB default
-		ReadBufferSize:        32 << 10, // 32KiB moving up from 4KiB default
-		IdleConnTimeout:       15 * time.Second,
-		ResponseHeaderTimeout: 3 * time.Minute, // Set conservative timeouts for MinIO internode.
-		TLSHandshakeTimeout:   15 * time.Second,
-		ExpectContinueTimeout: 15 * time.Second,
-		TLSClientConfig:       tlsConfig,
-		// Go net/http automatically unzip if content-type is
-		// gzip disable this feature, as we are always interested
-		// in raw stream.
-		DisableCompression: true,
-	}
-
-	// https://github.com/golang/go/issues/23559
-	// https://github.com/golang/go/issues/42534
-	// https://github.com/golang/go/issues/43989
-	// https://github.com/golang/go/issues/33425
-	// https://github.com/golang/go/issues/29246
-	// if tlsConfig != nil {
-	// 	trhttp2, _ := http2.ConfigureTransports(tr)
-	// 	if trhttp2 != nil {
-	// 		// ReadIdleTimeout is the timeout after which a health check using ping
-	// 		// frame will be carried out if no frame is received on the
-	// 		// connection. 5 minutes is sufficient time for any idle connection.
-	// 		trhttp2.ReadIdleTimeout = 5 * time.Minute
-	// 		// PingTimeout is the timeout after which the connection will be closed
-	// 		// if a response to Ping is not received.
-	// 		trhttp2.PingTimeout = dialTimeout
-	// 		// DisableCompression, if true, prevents the Transport from
-	// 		// requesting compression with an "Accept-Encoding: gzip"
-	// 		trhttp2.DisableCompression = true
-	// 	}
-	// }
-
-	return func() http.RoundTripper {
-		return tr
-	}
-}
-
-// Used by only proxied requests, specifically only supports HTTP/1.1
-func newCustomHTTPProxyTransport(tlsConfig *tls.Config, dialTimeout time.Duration) func() *http.Transport {
-	// For more details about various values used here refer
-	// https://golang.org/pkg/net/http/#Transport documentation
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           xhttp.DialContextWithDNSCache(globalDNSCache, xhttp.NewInternodeDialContext(dialTimeout)),
-		MaxIdleConnsPerHost:   1024,
-		WriteBufferSize:       16 << 10, // 16KiB moving up from 4KiB default
-		ReadBufferSize:        16 << 10, // 16KiB moving up from 4KiB default
-		IdleConnTimeout:       15 * time.Second,
-		ResponseHeaderTimeout: 30 * time.Minute, // Set larger timeouts for proxied requests.
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 10 * time.Second,
-		TLSClientConfig:       tlsConfig,
-		// Go net/http automatically unzip if content-type is
-		// gzip disable this feature, as we are always interested
-		// in raw stream.
-		DisableCompression: true,
-	}
-
-	return func() *http.Transport {
-		return tr
-	}
-}
-
-func newCustomHTTPTransportWithHTTP2(tlsConfig *tls.Config, dialTimeout time.Duration) func() *http.Transport {
-	// For more details about various values used here refer
-	// https://golang.org/pkg/net/http/#Transport documentation
-	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		DialContext:           xhttp.DialContextWithDNSCache(globalDNSCache, xhttp.NewInternodeDialContext(dialTimeout)),
-		MaxIdleConnsPerHost:   1024,
-		IdleConnTimeout:       15 * time.Second,
-		ResponseHeaderTimeout: 1 * time.Minute,
-		TLSHandshakeTimeout:   10 * time.Second,
-		ExpectContinueTimeout: 10 * time.Second,
-		TLSClientConfig:       tlsConfig,
-		// Go net/http automatically unzip if content-type is
-		// gzip disable this feature, as we are always interested
-		// in raw stream.
-		DisableCompression: true,
-	}
-
-	if tlsConfig != nil {
-		trhttp2, _ := http2.ConfigureTransports(tr)
-		if trhttp2 != nil {
-			// ReadIdleTimeout is the timeout after which a health check using ping
-			// frame will be carried out if no frame is received on the
-			// connection. 5 minutes is sufficient time for any idle connection.
-			trhttp2.ReadIdleTimeout = 5 * time.Minute
-			// PingTimeout is the timeout after which the connection will be closed
-			// if a response to Ping is not received.
-			trhttp2.PingTimeout = dialTimeout
-			// DisableCompression, if true, prevents the Transport from
-			// requesting compression with an "Accept-Encoding: gzip"
-			trhttp2.DisableCompression = true
-		}
-	}
-
-	return func() *http.Transport {
-		return tr
-	}
 }
 
 func newCustomHTTPTransport(tlsConfig *tls.Config, dialTimeout time.Duration) func() *http.Transport {
@@ -779,14 +656,13 @@ func newContext(r *http.Request, w http.ResponseWriter, api string) context.Cont
 		object = prefix
 	}
 	reqInfo := &logger.ReqInfo{
-		DeploymentID: globalDeploymentID,
-		RequestID:    w.Header().Get(xhttp.AmzRequestID),
-		RemoteHost:   handlers.GetSourceIP(r),
-		Host:         getHostName(r),
-		UserAgent:    r.UserAgent(),
-		API:          api,
-		BucketName:   bucket,
-		ObjectName:   object,
+		RequestID:  w.Header().Get(xhttp.AmzRequestID),
+		RemoteHost: handlers.GetSourceIP(r),
+		Host:       getHostName(r),
+		UserAgent:  r.UserAgent(),
+		API:        api,
+		BucketName: bucket,
+		ObjectName: object,
 	}
 	return logger.SetReqInfo(r.Context(), reqInfo)
 }
@@ -856,11 +732,7 @@ func lcp(strs []string, pre bool) string {
 // Returns the mode in which MinIO is running
 func getMinioMode() string {
 	mode := globalMinioModeFS
-	if globalIsDistErasure {
-		mode = globalMinioModeDistErasure
-	} else if globalIsErasure {
-		mode = globalMinioModeErasure
-	} else if globalIsGateway {
+	if globalIsGateway {
 		mode = globalMinioModeGatewayPrefix + globalGatewayName
 	}
 	return mode

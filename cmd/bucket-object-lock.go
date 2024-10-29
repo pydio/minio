@@ -322,7 +322,7 @@ func checkPutObjectLockAllowed(ctx context.Context, rq *http.Request, bucket, ob
 	if replica { // replica inherits retention metadata only from source
 		return "", objectlock.RetentionDate{}, legalHold, ErrNone
 	}
-	if !retentionRequested && retentionCfg.Validity > 0 {
+	if retentionCfg.Validity > 0 {
 		if retentionPermErr != ErrNone {
 			return mode, retainDate, legalHold, retentionPermErr
 		}

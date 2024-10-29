@@ -33,12 +33,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+
 	"github.com/minio/minio-go/v7/pkg/tags"
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/lifecycle"
-	objectlock "github.com/minio/minio/pkg/bucket/object/lock"
 	"github.com/minio/minio/pkg/bucket/policy"
 	"github.com/minio/minio/pkg/bucket/replication"
 	"github.com/minio/minio/pkg/event"
@@ -288,9 +287,6 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 	}
 
 	deleteObjectsFn := objectAPI.DeleteObjects
-	if api.CacheAPI() != nil {
-		deleteObjectsFn = api.CacheAPI().DeleteObjects
-	}
 
 	// Return Malformed XML as S3 spec if the list of objects is empty
 	if len(deleteObjects.Objects) == 0 {
@@ -300,21 +296,16 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 
 	var objectsToDelete = map[ObjectToDelete]int{}
 	getObjectInfoFn := objectAPI.GetObjectInfo
-	if api.CacheAPI() != nil {
-		getObjectInfoFn = api.CacheAPI().GetObjectInfo
-	}
 	var (
-		hasLockEnabled, hasLifecycleConfig, replicateSync bool
-		goi                                               ObjectInfo
-		gerr                                              error
+		hasLockEnabled, replicateSync bool
+		goi                           ObjectInfo
+		gerr                          error
 	)
 	replicateDeletes := hasReplicationRules(ctx, bucket, deleteObjects.Objects)
 	if rcfg, _ := globalBucketObjectLockSys.Get(bucket); rcfg.LockEnabled {
 		hasLockEnabled = true
 	}
-	if _, err := globalBucketMetadataSys.GetLifecycleConfig(bucket); err == nil {
-		hasLifecycleConfig = true
-	}
+
 	dErrs := make([]DeleteError, len(deleteObjects.Objects))
 	for index, object := range deleteObjects.Objects {
 		if apiErrCode := checkRequestAuthType(ctx, r, policy.DeleteObjectAction, bucket, object.ObjectName); apiErrCode != ErrNone {
@@ -345,13 +336,10 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 			}
 		}
 
-		if replicateDeletes || hasLockEnabled || hasLifecycleConfig {
+		if replicateDeletes || hasLockEnabled {
 			goi, gerr = getObjectInfoFn(ctx, bucket, object.ObjectName, ObjectOptions{
 				VersionID: object.VersionID,
 			})
-		}
-		if hasLifecycleConfig && gerr == nil {
-			object.PurgeTransitioned = goi.TransitionStatus
 		}
 		if replicateDeletes {
 			replicate, repsync := checkReplicateDelete(ctx, bucket, ObjectToDelete{
@@ -467,14 +455,6 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 				}
 				scheduleReplicationDelete(ctx, dv, objectAPI, replicateSync)
 			}
-		}
-
-		if hasLifecycleConfig && dobj.PurgeTransitioned == lifecycle.TransitionComplete { // clean up transitioned tier
-			deleteTransitionedObject(ctx, objectAPI, bucket, dobj.ObjectName, lifecycle.ObjectOpts{
-				Name:         dobj.ObjectName,
-				VersionID:    dobj.VersionID,
-				DeleteMarker: dobj.DeleteMarker,
-			}, false, true)
 		}
 
 		eventName := event.ObjectRemovedDelete
@@ -784,7 +764,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	var objectEncryptionKey crypto.ObjectKey
 
 	// Check if bucket encryption is enabled
-	if _, err = globalBucketSSEConfigSys.Get(bucket); err == nil || globalAutoEncryption {
+	if _, err = globalBucketSSEConfigSys.Get(bucket); err == nil {
 		// This request header needs to be set prior to setting ObjectOptions
 		if !crypto.SSEC.IsRequested(r.Header) {
 			r.Header.Set(xhttp.AmzServerSideEncryption, xhttp.AmzEncryptionAES)
@@ -1062,53 +1042,8 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 // to every new object placed in the specified bucket.
 func (api objectAPIHandlers) PutBucketObjectLockConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PutBucketObjectLockConfig")
-
-	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
-
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-
-	objectAPI := api.ObjectAPI()
-	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	if !globalIsErasure {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
-		return
-	}
-	if s3Error := checkRequestAuthType(ctx, r, policy.PutBucketObjectLockConfigurationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	config, err := objectlock.ParseObjectLockConfig(r.Body)
-	if err != nil {
-		apiErr := errorCodes.ToAPIErr(ErrMalformedXML)
-		apiErr.Description = err.Error()
-		writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	configData, err := xml.Marshal(config)
-	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Deny object locking configuration settings on existing buckets without object lock enabled.
-	if _, err = globalBucketMetadataSys.GetObjectLockConfig(bucket); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	if err = globalBucketMetadataSys.Update(bucket, objectLockConfig, configData); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Write success response.
-	writeSuccessResponseHeadersOnly(w)
+	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+	return
 }
 
 // GetBucketObjectLockConfigHandler - GET Bucket object lock configuration.
@@ -1270,61 +1205,8 @@ func (api objectAPIHandlers) DeleteBucketTaggingHandler(w http.ResponseWriter, r
 func (api objectAPIHandlers) PutBucketReplicationConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PutBucketReplicationConfig")
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
-
-	vars := mux.Vars(r)
-	bucket := vars["bucket"]
-	objectAPI := api.ObjectAPI()
-	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	if !globalIsErasure {
-		writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
-		return
-	}
-	if s3Error := checkRequestAuthType(ctx, r, policy.PutReplicationConfigurationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	// Check if bucket exists.
-	if _, err := objectAPI.GetBucketInfo(ctx, bucket); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	if versioned := globalBucketVersioningSys.Enabled(bucket); !versioned {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrReplicationNeedsVersioningError), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	replicationConfig, err := replication.ParseConfig(io.LimitReader(r.Body, r.ContentLength))
-	if err != nil {
-		apiErr := errorCodes.ToAPIErr(ErrMalformedXML)
-		apiErr.Description = err.Error()
-		writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
-		return
-	}
-	sameTarget, err := validateReplicationDestination(ctx, bucket, replicationConfig)
-	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	// Validate the received bucket replication config
-	if err = replicationConfig.Validate(bucket, sameTarget); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	configData, err := xml.Marshal(replicationConfig)
-	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-	if err = globalBucketMetadataSys.Update(bucket, bucketReplicationConfig, configData); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Write success response.
-	writeSuccessResponseHeadersOnly(w)
+	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+	return
 }
 
 // GetBucketReplicationConfigHandler - GET Bucket replication configuration.

@@ -18,11 +18,10 @@ package cmd
 
 import (
 	"encoding/xml"
-	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/gorilla/mux"
+
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/bucket/policy"
 )
@@ -64,37 +63,9 @@ func (api objectAPIHandlers) PutBucketEncryptionHandler(w http.ResponseWriter, r
 		return
 	}
 
-	// Parse bucket encryption xml
-	encConfig, err := validateBucketSSEConfig(io.LimitReader(r.Body, maxBucketSSEConfigSize))
-	if err != nil {
-		apiErr := APIError{
-			Code:           "MalformedXML",
-			Description:    fmt.Sprintf("%s (%s)", errorCodes[ErrMalformedXML].Description, err),
-			HTTPStatusCode: errorCodes[ErrMalformedXML].HTTPStatusCode,
-		}
-		writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
-		return
-	}
-
 	// Return error if KMS is not initialized
-	if GlobalKMS == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrKMSNotConfigured), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	configData, err := xml.Marshal(encConfig)
-	if err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	// Store the bucket encryption configuration in the object layer
-	if err = globalBucketMetadataSys.Update(bucket, bucketSSEConfig, configData); err != nil {
-		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
-		return
-	}
-
-	writeSuccessResponseHeadersOnly(w)
+	writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrKMSNotConfigured), r.URL, guessIsBrowserReq(r))
+	return
 }
 
 // GetBucketEncryptionHandler - Returns bucket policy configuration

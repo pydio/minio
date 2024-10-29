@@ -31,11 +31,12 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/minio/sio"
+
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/fips"
-	"github.com/minio/sio"
 )
 
 var (
@@ -140,47 +141,14 @@ func rotateKey(oldKey []byte, newKey []byte, bucket, object string, metadata map
 		crypto.SSEC.CreateMetadata(metadata, sealedKey)
 		return nil
 	case crypto.S3.IsEncrypted(metadata):
-		if GlobalKMS == nil {
-			return errKMSNotConfigured
-		}
-		keyID, kmsKey, sealedKey, err := crypto.S3.ParseMetadata(metadata)
-		if err != nil {
-			return err
-		}
-		oldKey, err := GlobalKMS.DecryptKey(keyID, kmsKey, crypto.Context{bucket: path.Join(bucket, object)})
-		if err != nil {
-			return err
-		}
-		var objectKey crypto.ObjectKey
-		if err = objectKey.Unseal(oldKey, sealedKey, crypto.S3.String(), bucket, object); err != nil {
-			return err
-		}
-
-		newKey, err := GlobalKMS.GenerateKey("", crypto.Context{bucket: path.Join(bucket, object)})
-		if err != nil {
-			return err
-		}
-		sealedKey = objectKey.Seal(newKey.Plaintext, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
-		crypto.S3.CreateMetadata(metadata, newKey.KeyID, newKey.Ciphertext, sealedKey)
-		return nil
+		return errKMSNotConfigured
 	}
 }
 
 func newEncryptMetadata(key []byte, bucket, object string, metadata map[string]string, sseS3 bool) (crypto.ObjectKey, error) {
 	var sealedKey crypto.SealedKey
 	if sseS3 {
-		if GlobalKMS == nil {
-			return crypto.ObjectKey{}, errKMSNotConfigured
-		}
-		key, err := GlobalKMS.GenerateKey("", crypto.Context{bucket: path.Join(bucket, object)})
-		if err != nil {
-			return crypto.ObjectKey{}, err
-		}
-
-		objectKey := crypto.GenerateKey(key.Plaintext, rand.Reader)
-		sealedKey = objectKey.Seal(key.Plaintext, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
-		crypto.S3.CreateMetadata(metadata, key.KeyID, key.Ciphertext, sealedKey)
-		return objectKey, nil
+		return crypto.ObjectKey{}, errKMSNotConfigured
 	}
 	objectKey := crypto.GenerateKey(key, rand.Reader)
 	sealedKey = objectKey.Seal(key, crypto.GenerateIV(rand.Reader), crypto.SSEC.String(), bucket, object)
@@ -244,28 +212,8 @@ func EncryptRequest(content io.Reader, r *http.Request, bucket, object string, m
 
 func decryptObjectInfo(key []byte, bucket, object string, metadata map[string]string) ([]byte, error) {
 	switch kind, _ := crypto.IsEncrypted(metadata); kind {
-	case crypto.S3:
-		var KMS crypto.KMS = GlobalKMS
-		if isCacheEncrypted(metadata) {
-			KMS = globalCacheKMS
-		}
-		if KMS == nil {
-			return nil, errKMSNotConfigured
-		}
-		objectKey, err := crypto.S3.UnsealObjectKey(KMS, metadata, bucket, object)
-		if err != nil {
-			return nil, err
-		}
-		return objectKey[:], nil
-	case crypto.S3KMS:
-		if GlobalKMS == nil {
-			return nil, errKMSNotConfigured
-		}
-		objectKey, err := crypto.S3KMS.UnsealObjectKey(GlobalKMS, metadata, bucket, object)
-		if err != nil {
-			return nil, err
-		}
-		return objectKey[:], nil
+	case crypto.S3, crypto.S3KMS:
+		return nil, errKMSNotConfigured
 	case crypto.SSEC:
 		sealedKey, err := crypto.SSEC.ParseMetadata(metadata)
 		if err != nil {

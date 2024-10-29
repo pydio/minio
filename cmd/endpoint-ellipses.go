@@ -287,31 +287,32 @@ func GetAllSets(args ...string) ([][]string, error) {
 	}
 
 	var setArgs [][]string
-	if !ellipses.HasEllipses(args...) {
-		var setIndexes [][]uint64
-		// Check if we have more one args.
-		if len(args) > 1 {
-			var err error
-			setIndexes, err = getSetIndexes(args, []uint64{uint64(len(args))}, customSetDriveCount, nil)
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			// We are in FS setup, proceed forward.
-			setIndexes = [][]uint64{{uint64(len(args))}}
-		}
-		s := endpointSet{
-			endpoints:  args,
-			setIndexes: setIndexes,
-		}
-		setArgs = s.Get()
-	} else {
-		s, err := parseEndpointSet(customSetDriveCount, args...)
+	//	if !ellipses.HasEllipses(args...) {
+	var setIndexes [][]uint64
+	// Check if we have more one args.
+	if len(args) > 1 {
+		var err error
+		setIndexes, err = getSetIndexes(args, []uint64{uint64(len(args))}, customSetDriveCount, nil)
 		if err != nil {
 			return nil, err
 		}
-		setArgs = s.Get()
+	} else {
+		// We are in FS setup, proceed forward.
+		setIndexes = [][]uint64{{uint64(len(args))}}
 	}
+	s := endpointSet{
+		endpoints:  args,
+		setIndexes: setIndexes,
+	}
+	setArgs = s.Get()
+
+	//	} else {
+	//		s, err := parseEndpointSet(customSetDriveCount, args...)
+	//		if err != nil {
+	//			return nil, err
+	//		}
+	//		setArgs = s.Get()
+	//	}
 
 	uniqueArgs := set.NewStringSet()
 	for _, sargs := range setArgs {
@@ -344,50 +345,20 @@ func createServerEndpoints(serverAddr string, args ...string) (
 		return nil, -1, errInvalidArgument
 	}
 
-	if !ellipses.HasEllipses(args...) {
-		setArgs, err := GetAllSets(args...)
-		if err != nil {
-			return nil, -1, err
-		}
-		endpointList, newSetupType, err := CreateEndpoints(serverAddr, false, setArgs...)
-		if err != nil {
-			return nil, -1, err
-		}
-		endpointServerPools = append(endpointServerPools, PoolEndpoints{
-			SetCount:     len(setArgs),
-			DrivesPerSet: len(setArgs[0]),
-			Endpoints:    endpointList,
-		})
-		setupType = newSetupType
-		return endpointServerPools, setupType, nil
+	setArgs, err := GetAllSets(args...)
+	if err != nil {
+		return nil, -1, err
 	}
-
-	var foundPrevLocal bool
-	for _, arg := range args {
-		setArgs, err := GetAllSets(arg)
-		if err != nil {
-			return nil, -1, err
-		}
-
-		endpointList, gotSetupType, err := CreateEndpoints(serverAddr, foundPrevLocal, setArgs...)
-		if err != nil {
-			return nil, -1, err
-		}
-		if err = endpointServerPools.Add(PoolEndpoints{
-			SetCount:     len(setArgs),
-			DrivesPerSet: len(setArgs[0]),
-			Endpoints:    endpointList,
-		}); err != nil {
-			return nil, -1, err
-		}
-		foundPrevLocal = endpointList.atleastOneEndpointLocal()
-		if setupType == UnknownSetupType {
-			setupType = gotSetupType
-		}
-		if setupType == ErasureSetupType && gotSetupType == DistErasureSetupType {
-			setupType = DistErasureSetupType
-		}
+	endpointList, newSetupType, err := CreateEndpoints(serverAddr, false, setArgs...)
+	if err != nil {
+		return nil, -1, err
 	}
-
+	endpointServerPools = append(endpointServerPools, PoolEndpoints{
+		SetCount:     len(setArgs),
+		DrivesPerSet: len(setArgs[0]),
+		Endpoints:    endpointList,
+	})
+	setupType = newSetupType
 	return endpointServerPools, setupType, nil
+
 }

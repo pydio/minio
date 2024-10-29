@@ -148,18 +148,8 @@ type ObjectLayer interface {
 
 	SetDriveCounts() []int // list of erasure stripe size for each pool in order.
 
-	// Healing operations.
-	HealFormat(ctx context.Context, dryRun bool) (madmin.HealResultItem, error)
-	HealBucket(ctx context.Context, bucket string, opts madmin.HealOpts) (madmin.HealResultItem, error)
-	HealObject(ctx context.Context, bucket, object, versionID string, opts madmin.HealOpts) (madmin.HealResultItem, error)
-	HealObjects(ctx context.Context, bucket, prefix string, opts madmin.HealOpts, fn HealObjectFn) error
-
 	// Backend related metrics
 	GetMetrics(ctx context.Context) (*BackendMetrics, error)
-
-	// Returns health of the backend
-	Health(ctx context.Context, opts HealthOptions) HealthResult
-	ReadHealth(ctx context.Context) bool
 
 	// Metadata operations
 	PutObjectMetadata(context.Context, string, string, ObjectOptions) (ObjectInfo, error)

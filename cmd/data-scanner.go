@@ -30,6 +30,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/willf/bloom"
+
 	"github.com/minio/minio/cmd/config/heal"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/bucket/lifecycle"
@@ -39,7 +41,6 @@ import (
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/hash"
 	"github.com/minio/minio/pkg/madmin"
-	"github.com/willf/bloom"
 )
 
 const (
@@ -220,25 +221,6 @@ func scanDataFolder(ctx context.Context, basePath string, cache dataUsageCache, 
 		healObjectSelect:      0,
 	}
 
-	// Add disks for set healing.
-	if len(cache.Disks) > 0 {
-		objAPI, ok := newObjectLayerFn().(*erasureServerPools)
-		if ok {
-			s.disks = objAPI.GetDisksID(cache.Disks...)
-			if len(s.disks) != len(cache.Disks) {
-				console.Debugf(logPrefix+"Missing disks, want %d, found %d. Cannot heal. %s\n", len(cache.Disks), len(s.disks), logSuffix)
-				s.disks = s.disks[:0]
-			}
-		}
-	}
-
-	// Enable healing in XL mode.
-	if globalIsErasure {
-		// Include a clean folder one in n cycles.
-		s.healFolderInclude = healFolderIncludeProb
-		// Do a heal check on an object once every n cycles. Must divide into healFolderInclude
-		s.healObjectSelect = healObjectSelectProb
-	}
 	if len(cache.Info.BloomFilter) > 0 {
 		s.withFilter = &bloomFilter{BloomFilter: &bloom.BloomFilter{}}
 		_, err := s.withFilter.ReadFrom(bytes.NewReader(cache.Info.BloomFilter))
@@ -484,7 +466,7 @@ func (f *folderScanner) scanQueuedLevels(ctx context.Context, folders []cachedFo
 				objectName: path.Base(entName),
 				debug:      f.dataUsageScannerDebug,
 				lifeCycle:  activeLifeCycle,
-				heal:       thisHash.mod(f.oldCache.Info.NextCycle, f.healObjectSelect/folder.objectHealProbDiv) && globalIsErasure,
+				heal:       false,
 			}
 
 			// if the drive belongs to an erasure set
@@ -527,171 +509,173 @@ func (f *folderScanner) scanQueuedLevels(ctx context.Context, folders []cachedFo
 			continue
 		}
 
-		objAPI, ok := newObjectLayerFn().(*erasureServerPools)
-		if !ok || len(f.disks) == 0 {
-			continue
-		}
-
-		bgSeq, found := globalBackgroundHealState.getHealSequenceByToken(bgHealingUUID)
-		if !found {
-			continue
-		}
-
-		// Whatever remains in 'existing' are folders at this level
-		// that existed in the previous run but wasn't found now.
-		//
-		// This may be because of 2 reasons:
-		//
-		// 1) The folder/object was deleted.
-		// 2) We come from another disk and this disk missed the write.
-		//
-		// We therefore perform a heal check.
-		// If that doesn't bring it back we remove the folder and assume it was deleted.
-		// This means that the next run will not look for it.
-		// How to resolve results.
-		resolver := metadataResolutionParams{
-			dirQuorum: getReadQuorum(len(f.disks)),
-			objQuorum: getReadQuorum(len(f.disks)),
-			bucket:    "",
-		}
-
-		healObjectsPrefix := color.Green("healObjects:")
-		for k := range existing {
-			bucket, prefix := path2BucketObject(k)
-			if f.dataUsageScannerDebug {
-				console.Debugf(scannerLogPrefix+" checking disappeared folder: %v/%v\n", bucket, prefix)
+		/*
+			objAPI, ok := newObjectLayerFn().(*erasureServerPools)
+			if !ok || len(f.disks) == 0 {
+				continue
 			}
 
-			// Dynamic time delay.
-			wait := scannerSleeper.Timer(ctx)
-			resolver.bucket = bucket
+			bgSeq, found := globalBackgroundHealState.getHealSequenceByToken(bgHealingUUID)
+			if !found {
+				continue
+			}
 
-			foundObjs := false
-			dangling := false
-			ctx, cancel := context.WithCancel(ctx)
+			// Whatever remains in 'existing' are folders at this level
+			// that existed in the previous run but wasn't found now.
+			//
+			// This may be because of 2 reasons:
+			//
+			// 1) The folder/object was deleted.
+			// 2) We come from another disk and this disk missed the write.
+			//
+			// We therefore perform a heal check.
+			// If that doesn't bring it back we remove the folder and assume it was deleted.
+			// This means that the next run will not look for it.
+			// How to resolve results.
+			resolver := metadataResolutionParams{
+				dirQuorum: getReadQuorum(len(f.disks)),
+				objQuorum: getReadQuorum(len(f.disks)),
+				bucket:    "",
+			}
 
-			err := listPathRaw(ctx, listPathRawOptions{
-				disks:          f.disks,
-				bucket:         bucket,
-				path:           prefix,
-				recursive:      true,
-				reportNotFound: true,
-				minDisks:       len(f.disks), // We want full consistency.
-				// Weird, maybe transient error.
-				agreed: func(entry metaCacheEntry) {
-					if f.dataUsageScannerDebug {
-						console.Debugf(healObjectsPrefix+" got agreement: %v\n", entry.name)
-					}
-				},
-				// Some disks have data for this.
-				partial: func(entries metaCacheEntries, nAgreed int, errs []error) {
-					if f.dataUsageScannerDebug {
-						console.Debugf(healObjectsPrefix+" got partial, %d agreed, errs: %v\n", nAgreed, errs)
-					}
+			healObjectsPrefix := color.Green("healObjects:")
+			for k := range existing {
+				bucket, prefix := path2BucketObject(k)
+				if f.dataUsageScannerDebug {
+					console.Debugf(scannerLogPrefix+" checking disappeared folder: %v/%v\n", bucket, prefix)
+				}
 
-					// agreed value less than expected quorum
-					dangling = nAgreed < resolver.objQuorum || nAgreed < resolver.dirQuorum
+				// Dynamic time delay.
+				wait := scannerSleeper.Timer(ctx)
+				resolver.bucket = bucket
 
-					// Sleep and reset.
-					wait()
-					wait = scannerSleeper.Timer(ctx)
-					entry, ok := entries.resolve(&resolver)
-					if !ok {
-						for _, err := range errs {
-							if err != nil {
-								return
-							}
+				foundObjs := false
+				dangling := false
+				ctx, cancel := context.WithCancel(ctx)
+
+				err := listPathRaw(ctx, listPathRawOptions{
+					disks:          f.disks,
+					bucket:         bucket,
+					path:           prefix,
+					recursive:      true,
+					reportNotFound: true,
+					minDisks:       len(f.disks), // We want full consistency.
+					// Weird, maybe transient error.
+					agreed: func(entry metaCacheEntry) {
+						if f.dataUsageScannerDebug {
+							console.Debugf(healObjectsPrefix+" got agreement: %v\n", entry.name)
+						}
+					},
+					// Some disks have data for this.
+					partial: func(entries metaCacheEntries, nAgreed int, errs []error) {
+						if f.dataUsageScannerDebug {
+							console.Debugf(healObjectsPrefix+" got partial, %d agreed, errs: %v\n", nAgreed, errs)
 						}
 
-						// If no errors, queue it for healing.
-						entry, _ = entries.firstFound()
-					}
+						// agreed value less than expected quorum
+						dangling = nAgreed < resolver.objQuorum || nAgreed < resolver.dirQuorum
 
-					if f.dataUsageScannerDebug {
-						console.Debugf(healObjectsPrefix+" resolved to: %v, dir: %v\n", entry.name, entry.isDir())
-					}
-
-					if entry.isDir() {
-						return
-					}
-					// We got an entry which we should be able to heal.
-					fiv, err := entry.fileInfoVersions(bucket)
-					if err != nil {
-						err := bgSeq.queueHealTask(healSource{
-							bucket:    bucket,
-							object:    entry.name,
-							versionID: "",
-						}, madmin.HealItemObject)
-						if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
-							logger.LogIf(ctx, err)
-						}
-						foundObjs = foundObjs || err == nil
-						return
-					}
-					for _, ver := range fiv.Versions {
 						// Sleep and reset.
 						wait()
 						wait = scannerSleeper.Timer(ctx)
-						err := bgSeq.queueHealTask(healSource{
-							bucket:    bucket,
-							object:    fiv.Name,
-							versionID: ver.VersionID,
-						}, madmin.HealItemObject)
-						if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
-							logger.LogIf(ctx, err)
+						entry, ok := entries.resolve(&resolver)
+						if !ok {
+							for _, err := range errs {
+								if err != nil {
+									return
+								}
+							}
+
+							// If no errors, queue it for healing.
+							entry, _ = entries.firstFound()
 						}
-						foundObjs = foundObjs || err == nil
-					}
-				},
-				// Too many disks failed.
-				finished: func(errs []error) {
+
+						if f.dataUsageScannerDebug {
+							console.Debugf(healObjectsPrefix+" resolved to: %v, dir: %v\n", entry.name, entry.isDir())
+						}
+
+						if entry.isDir() {
+							return
+						}
+						// We got an entry which we should be able to heal.
+						fiv, err := entry.fileInfoVersions(bucket)
+						if err != nil {
+							err := bgSeq.queueHealTask(healSource{
+								bucket:    bucket,
+								object:    entry.name,
+								versionID: "",
+							}, madmin.HealItemObject)
+							if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
+								logger.LogIf(ctx, err)
+							}
+							foundObjs = foundObjs || err == nil
+							return
+						}
+						for _, ver := range fiv.Versions {
+							// Sleep and reset.
+							wait()
+							wait = scannerSleeper.Timer(ctx)
+							err := bgSeq.queueHealTask(healSource{
+								bucket:    bucket,
+								object:    fiv.Name,
+								versionID: ver.VersionID,
+							}, madmin.HealItemObject)
+							if !isErrObjectNotFound(err) && !isErrVersionNotFound(err) {
+								logger.LogIf(ctx, err)
+							}
+							foundObjs = foundObjs || err == nil
+						}
+					},
+					// Too many disks failed.
+					finished: func(errs []error) {
+						if f.dataUsageScannerDebug {
+							console.Debugf(healObjectsPrefix+" too many errors: %v\n", errs)
+						}
+						cancel()
+					},
+				})
+
+				if f.dataUsageScannerDebug && err != nil && err != errFileNotFound {
+					console.Debugf(healObjectsPrefix+" checking returned value %v (%T)\n", err, err)
+				}
+
+				// If we found one or more disks with this folder, delete it.
+				if err == nil && dangling {
 					if f.dataUsageScannerDebug {
-						console.Debugf(healObjectsPrefix+" too many errors: %v\n", errs)
+						console.Debugf(healObjectsPrefix+" deleting dangling directory %s\n", prefix)
 					}
-					cancel()
-				},
-			})
 
-			if f.dataUsageScannerDebug && err != nil && err != errFileNotFound {
-				console.Debugf(healObjectsPrefix+" checking returned value %v (%T)\n", err, err)
-			}
-
-			// If we found one or more disks with this folder, delete it.
-			if err == nil && dangling {
-				if f.dataUsageScannerDebug {
-					console.Debugf(healObjectsPrefix+" deleting dangling directory %s\n", prefix)
+					objAPI.HealObjects(ctx, bucket, prefix, madmin.HealOpts{
+						Recursive: true,
+						Remove:    healDeleteDangling,
+					},
+						func(bucket, object, versionID string) error {
+							// Wait for each heal as per scanner frequency.
+							wait()
+							wait = scannerSleeper.Timer(ctx)
+							return bgSeq.queueHealTask(healSource{
+								bucket:    bucket,
+								object:    object,
+								versionID: versionID,
+							}, madmin.HealItemObject)
+						})
 				}
 
-				objAPI.HealObjects(ctx, bucket, prefix, madmin.HealOpts{
-					Recursive: true,
-					Remove:    healDeleteDangling,
-				},
-					func(bucket, object, versionID string) error {
-						// Wait for each heal as per scanner frequency.
-						wait()
-						wait = scannerSleeper.Timer(ctx)
-						return bgSeq.queueHealTask(healSource{
-							bucket:    bucket,
-							object:    object,
-							versionID: versionID,
-						}, madmin.HealItemObject)
-					})
-			}
+				wait()
 
-			wait()
-
-			// Add unless healing returned an error.
-			if foundObjs {
-				this := cachedFolder{name: k, parent: &thisHash, objectHealProbDiv: folder.objectHealProbDiv}
-				cache.addChild(hashPath(k))
-				if final {
-					f.existingFolders = append(f.existingFolders, this)
-				} else {
-					nextFolders = append(nextFolders, this)
+				// Add unless healing returned an error.
+				if foundObjs {
+					this := cachedFolder{name: k, parent: &thisHash, objectHealProbDiv: folder.objectHealProbDiv}
+					cache.addChild(hashPath(k))
+					if final {
+						f.existingFolders = append(f.existingFolders, this)
+					} else {
+						nextFolders = append(nextFolders, this)
+					}
 				}
 			}
-		}
-		f.newCache.replaceHashed(thisHash, folder.parent, cache)
+			f.newCache.replaceHashed(thisHash, folder.parent, cache)
+		*/
 	}
 	return nextFolders, nil
 }
@@ -746,7 +730,7 @@ func (f *folderScanner) deepScanFolder(ctx context.Context, folder cachedFolder,
 			objectName: path.Base(entName),
 			debug:      f.dataUsageScannerDebug,
 			lifeCycle:  activeLifeCycle,
-			heal:       hashPath(path.Join(prefix, entName)).mod(f.oldCache.Info.NextCycle, f.healObjectSelect/folder.objectHealProbDiv) && globalIsErasure,
+			heal:       false,
 		}
 
 		// if the drive belongs to an erasure set
@@ -824,125 +808,12 @@ type actionMeta struct {
 
 var applyActionsLogPrefix = color.Green("applyActions:")
 
-func (i *scannerItem) applyHealing(ctx context.Context, o ObjectLayer, meta actionMeta) (size int64) {
-	if i.debug {
-		if meta.oi.VersionID != "" {
-			console.Debugf(applyActionsLogPrefix+" heal checking: %v/%v v(%s)\n", i.bucket, i.objectPath(), meta.oi.VersionID)
-		} else {
-			console.Debugf(applyActionsLogPrefix+" heal checking: %v/%v\n", i.bucket, i.objectPath())
-		}
-	}
-	healOpts := madmin.HealOpts{Remove: healDeleteDangling}
-	if meta.bitRotScan {
-		healOpts.ScanMode = madmin.HealDeepScan
-	}
-	res, err := o.HealObject(ctx, i.bucket, i.objectPath(), meta.oi.VersionID, healOpts)
-	if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
-		return 0
-	}
-	if err != nil && !errors.Is(err, NotImplemented{}) {
-		logger.LogIf(ctx, err)
-		return 0
-	}
-	return res.ObjectSize
-}
-
-func (i *scannerItem) applyLifecycle(ctx context.Context, o ObjectLayer, meta actionMeta) (applied bool, size int64) {
-	size, err := meta.oi.GetActualSize()
-	if i.debug {
-		logger.LogIf(ctx, err)
-	}
-	if i.lifeCycle == nil {
-		if i.debug {
-			console.Debugf(applyActionsLogPrefix+" no lifecycle rules to apply: %q\n", i.objectPath())
-		}
-		return false, size
-	}
-
-	versionID := meta.oi.VersionID
-	action := i.lifeCycle.ComputeAction(
-		lifecycle.ObjectOpts{
-			Name:             i.objectPath(),
-			UserTags:         meta.oi.UserTags,
-			ModTime:          meta.oi.ModTime,
-			VersionID:        meta.oi.VersionID,
-			DeleteMarker:     meta.oi.DeleteMarker,
-			IsLatest:         meta.oi.IsLatest,
-			NumVersions:      meta.oi.NumVersions,
-			SuccessorModTime: meta.oi.SuccessorModTime,
-			RestoreOngoing:   meta.oi.RestoreOngoing,
-			RestoreExpires:   meta.oi.RestoreExpires,
-			TransitionStatus: meta.oi.TransitionStatus,
-		})
-	if i.debug {
-		if versionID != "" {
-			console.Debugf(applyActionsLogPrefix+" lifecycle: %q (version-id=%s), Initial scan: %v\n", i.objectPath(), versionID, action)
-		} else {
-			console.Debugf(applyActionsLogPrefix+" lifecycle: %q Initial scan: %v\n", i.objectPath(), action)
-		}
-	}
-	switch action {
-	case lifecycle.DeleteAction, lifecycle.DeleteVersionAction:
-	case lifecycle.TransitionAction, lifecycle.TransitionVersionAction:
-	case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
-	default:
-		// No action.
-		if i.debug {
-			console.Debugf(applyActionsLogPrefix+" object not expirable: %q\n", i.objectPath())
-		}
-		return false, size
-	}
-
-	obj, err := o.GetObjectInfo(ctx, i.bucket, i.objectPath(), ObjectOptions{
-		VersionID: versionID,
-	})
-	if err != nil {
-		switch err.(type) {
-		case MethodNotAllowed: // This happens usually for a delete marker
-			if !obj.DeleteMarker { // if this is not a delete marker log and return
-				// Do nothing - heal in the future.
-				logger.LogIf(ctx, err)
-				return false, size
-			}
-		case ObjectNotFound, VersionNotFound:
-			// object not found or version not found return 0
-			return false, 0
-		default:
-			// All other errors proceed.
-			logger.LogIf(ctx, err)
-			return false, size
-		}
-	}
-
-	action = evalActionFromLifecycle(ctx, *i.lifeCycle, obj, i.debug)
-	if action != lifecycle.NoneAction {
-		applied = applyLifecycleAction(ctx, action, o, obj)
-	}
-
-	if applied {
-		switch action {
-		case lifecycle.TransitionAction, lifecycle.TransitionVersionAction:
-			return true, size
-		}
-		// For all other lifecycle actions that remove data
-		return true, 0
-	}
-
-	return false, size
-}
-
 // applyActions will apply lifecycle checks on to a scanned item.
 // The resulting size on disk will always be returned.
 // The metadata will be compared to consensus on the object layer before any changes are applied.
 // If no metadata is supplied, -1 is returned if no action is taken.
 func (i *scannerItem) applyActions(ctx context.Context, o ObjectLayer, meta actionMeta) int64 {
-	applied, size := i.applyLifecycle(ctx, o, meta)
-	// For instance, an applied lifecycle means we remove/transitioned an object
-	// from the current deployment, which means we don't have to call healing
-	// routine even if we are asked to do via heal flag.
-	if !applied && i.heal {
-		size = i.applyHealing(ctx, o, meta)
-	}
+	size, _ := meta.oi.GetActualSize()
 	return size
 }
 
@@ -994,52 +865,6 @@ func evalActionFromLifecycle(ctx context.Context, lc lifecycle.Lifecycle, obj Ob
 	return action
 }
 
-func applyTransitionAction(ctx context.Context, action lifecycle.Action, objLayer ObjectLayer, obj ObjectInfo) bool {
-	opts := ObjectOptions{}
-	if obj.TransitionStatus == "" {
-		opts.Versioned = globalBucketVersioningSys.Enabled(obj.Bucket)
-		opts.VersionID = obj.VersionID
-		opts.TransitionStatus = lifecycle.TransitionPending
-		if _, err := objLayer.DeleteObject(ctx, obj.Bucket, obj.Name, opts); err != nil {
-			if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
-				return false
-			}
-			// Assume it is still there.
-			logger.LogIf(ctx, err)
-			return false
-		}
-	}
-	getGlobalTransitionState().queueTransitionTask(obj)
-	return true
-
-}
-
-func applyExpiryOnTransitionedObject(ctx context.Context, objLayer ObjectLayer, obj ObjectInfo, restoredObject bool) bool {
-	lcOpts := lifecycle.ObjectOpts{
-		Name:             obj.Name,
-		UserTags:         obj.UserTags,
-		ModTime:          obj.ModTime,
-		VersionID:        obj.VersionID,
-		DeleteMarker:     obj.DeleteMarker,
-		IsLatest:         obj.IsLatest,
-		NumVersions:      obj.NumVersions,
-		SuccessorModTime: obj.SuccessorModTime,
-		RestoreOngoing:   obj.RestoreOngoing,
-		RestoreExpires:   obj.RestoreExpires,
-		TransitionStatus: obj.TransitionStatus,
-	}
-
-	if err := deleteTransitionedObject(ctx, objLayer, obj.Bucket, obj.Name, lcOpts, restoredObject, false); err != nil {
-		if isErrObjectNotFound(err) || isErrVersionNotFound(err) {
-			return false
-		}
-		logger.LogIf(ctx, err)
-		return false
-	}
-	// Notification already sent at *deleteTransitionedObject*, just return 'true' here.
-	return true
-}
-
 func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLayer, obj ObjectInfo, applyOnVersion bool) bool {
 	opts := ObjectOptions{}
 
@@ -1074,27 +899,6 @@ func applyExpiryOnNonTransitionedObjects(ctx context.Context, objLayer ObjectLay
 	})
 
 	return true
-}
-
-// Apply object, object version, restored object or restored object version action on the given object
-func applyExpiryRule(ctx context.Context, objLayer ObjectLayer, obj ObjectInfo, restoredObject, applyOnVersion bool) bool {
-	if obj.TransitionStatus != "" {
-		return applyExpiryOnTransitionedObject(ctx, objLayer, obj, restoredObject)
-	}
-	return applyExpiryOnNonTransitionedObjects(ctx, objLayer, obj, applyOnVersion)
-}
-
-// Perform actions (removal or transitioning of objects), return true the action is successfully performed
-func applyLifecycleAction(ctx context.Context, action lifecycle.Action, objLayer ObjectLayer, obj ObjectInfo) (success bool) {
-	switch action {
-	case lifecycle.DeleteVersionAction, lifecycle.DeleteAction:
-		success = applyExpiryRule(ctx, objLayer, obj, false, action == lifecycle.DeleteVersionAction)
-	case lifecycle.DeleteRestoredAction, lifecycle.DeleteRestoredVersionAction:
-		success = applyExpiryRule(ctx, objLayer, obj, true, action == lifecycle.DeleteRestoredVersionAction)
-	case lifecycle.TransitionAction, lifecycle.TransitionVersionAction:
-		success = applyTransitionAction(ctx, action, objLayer, obj)
-	}
-	return
 }
 
 // objectPath returns the prefix and object name.

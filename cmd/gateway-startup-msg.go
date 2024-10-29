@@ -26,11 +26,7 @@ import (
 // Prints the formatted startup message.
 func printGatewayStartupMessage(apiEndPoints []string, backendType string) {
 	strippedAPIEndpoints := stripStandardPorts(apiEndPoints)
-	// If cache layer is enabled, print cache capacity.
-	cacheAPI := newCachedObjectLayerFn()
-	if cacheAPI != nil {
-		printCacheStorageInfo(cacheAPI.StorageInfo(GlobalContext))
-	}
+
 	// Prints credential.
 	printGatewayCommonMsg(strippedAPIEndpoints)
 

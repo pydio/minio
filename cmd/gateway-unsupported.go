@@ -20,14 +20,12 @@ import (
 	"context"
 	"errors"
 
-	"github.com/minio/minio/cmd/logger"
-
 	"github.com/minio/minio-go/v7/pkg/tags"
+	"github.com/minio/minio/cmd/logger"
 	bucketsse "github.com/minio/minio/pkg/bucket/encryption"
 	"github.com/minio/minio/pkg/bucket/lifecycle"
 	"github.com/minio/minio/pkg/bucket/policy"
 	"github.com/minio/minio/pkg/bucket/versioning"
-
 	"github.com/minio/minio/pkg/madmin"
 )
 
@@ -203,11 +201,6 @@ func (a GatewayUnsupported) Walk(ctx context.Context, bucket, prefix string, res
 	return NotImplemented{}
 }
 
-// HealObjects - Not implemented stub
-func (a GatewayUnsupported) HealObjects(ctx context.Context, bucket, prefix string, opts madmin.HealOpts, fn HealObjectFn) (e error) {
-	return NotImplemented{}
-}
-
 // CopyObject copies a blob from source container to destination container.
 func (a GatewayUnsupported) CopyObject(ctx context.Context, srcBucket string, srcObject string, destBucket string, destObject string,
 	srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error) {
@@ -261,11 +254,6 @@ func (a GatewayUnsupported) IsTaggingSupported() bool {
 // IsCompressionSupported returns whether compression is applicable for this layer.
 func (a GatewayUnsupported) IsCompressionSupported() bool {
 	return false
-}
-
-// Health - No Op.
-func (a GatewayUnsupported) Health(_ context.Context, _ HealthOptions) HealthResult {
-	return HealthResult{}
 }
 
 // ReadHealth - No Op.

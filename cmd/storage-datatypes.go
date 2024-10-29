@@ -17,15 +17,20 @@
 package cmd
 
 import (
+	"net/http"
 	"time"
+
+	xhttp "github.com/minio/minio/cmd/http"
+	"github.com/minio/minio/pkg/bucket/replication"
 )
 
 //go:generate msgp -file=$GOFILE
 
 // DiskInfo is an extended type which returns current
 // disk usage per path.
-//msgp:tuple DiskInfo
 // The above means that any added/deleted fields are incompatible.
+//
+//msgp:tuple DiskInfo
 type DiskInfo struct {
 	Total      uint64
 	Free       uint64
@@ -53,8 +58,9 @@ type DiskMetrics struct {
 type VolsInfo []VolInfo
 
 // VolInfo - represents volume stat information.
-//msgp:tuple VolInfo
 // The above means that any added/deleted fields are incompatible.
+//
+//msgp:tuple VolInfo
 type VolInfo struct {
 	// Name of the volume.
 	Name string
@@ -109,8 +115,9 @@ func (f *FileInfoVersions) findVersionIndex(v string) int {
 }
 
 // FileInfo - represents file stat information.
-//msgp:tuple FileInfo
 // The above means that any added/deleted fields are incompatible.
+//
+//msgp:tuple FileInfo
 type FileInfo struct {
 	// Name of the volume.
 	Volume string
@@ -154,9 +161,6 @@ type FileInfo struct {
 	// All the parts per object.
 	Parts []ObjectPartInfo
 
-	// Erasure info for all objects.
-	Erasure ErasureInfo
-
 	// DeleteMarkerReplicationStatus is set when this FileInfo represents
 	// replication on a DeleteMarker
 	MarkDeleted                   bool // mark this version as deleted
@@ -168,9 +172,6 @@ type FileInfo struct {
 	NumVersions      int
 	SuccessorModTime time.Time
 }
-
-// VersionPurgeStatusKey denotes purge status in metadata
-const VersionPurgeStatusKey = "purgestatus"
 
 // VersionPurgeStatusType represents status of a versioned delete or permanent delete w.r.t bucket replication
 type VersionPurgeStatusType string
@@ -196,14 +197,75 @@ func (v VersionPurgeStatusType) Pending() bool {
 	return v == Pending || v == Failed
 }
 
-// newFileInfo - initializes new FileInfo, allocates a fresh erasure info.
-func newFileInfo(object string, dataBlocks, parityBlocks int) (fi FileInfo) {
-	fi.Erasure = ErasureInfo{
-		Algorithm:    erasureAlgorithm,
-		DataBlocks:   dataBlocks,
-		ParityBlocks: parityBlocks,
-		BlockSize:    blockSizeV2,
-		Distribution: hashOrder(object, dataBlocks+parityBlocks),
+// ToObjectInfo - Converts metadata to object info.
+func (fi FileInfo) ToObjectInfo(bucket, object string) ObjectInfo {
+	object = decodeDirObject(object)
+	versionID := fi.VersionID
+	if (globalBucketVersioningSys.Enabled(bucket) || globalBucketVersioningSys.Suspended(bucket)) && versionID == "" {
+		versionID = nullVersionID
 	}
-	return fi
+
+	objInfo := ObjectInfo{
+		IsDir:            HasSuffix(object, SlashSeparator),
+		Bucket:           bucket,
+		Name:             object,
+		VersionID:        versionID,
+		IsLatest:         fi.IsLatest,
+		DeleteMarker:     fi.Deleted,
+		Size:             fi.Size,
+		ModTime:          fi.ModTime,
+		Legacy:           fi.XLV1,
+		ContentType:      fi.Metadata["content-type"],
+		ContentEncoding:  fi.Metadata["content-encoding"],
+		NumVersions:      fi.NumVersions,
+		SuccessorModTime: fi.SuccessorModTime,
+	}
+
+	// Update expires
+	var (
+		t time.Time
+		e error
+	)
+	if exp, ok := fi.Metadata["expires"]; ok {
+		if t, e = time.Parse(http.TimeFormat, exp); e == nil {
+			objInfo.Expires = t.UTC()
+		}
+	}
+	objInfo.backendType = BackendErasure
+
+	// Extract etag from metadata.
+	objInfo.ETag = extractETag(fi.Metadata)
+
+	// Add user tags to the object info
+	tags := fi.Metadata[xhttp.AmzObjectTagging]
+	if len(tags) != 0 {
+		objInfo.UserTags = tags
+	}
+
+	// Add replication status to the object info
+	objInfo.ReplicationStatus = replication.StatusType(fi.Metadata[xhttp.AmzBucketReplicationStatus])
+	if fi.Deleted {
+		objInfo.ReplicationStatus = replication.StatusType(fi.DeleteMarkerReplicationStatus)
+	}
+
+	objInfo.TransitionStatus = fi.TransitionStatus
+
+	// etag/md5Sum has already been extracted. We need to
+	// remove to avoid it from appearing as part of
+	// response headers. e.g, X-Minio-* or X-Amz-*.
+	// Tags have also been extracted, we remove that as well.
+	objInfo.UserDefined = cleanMetadata(fi.Metadata)
+
+	// All the parts per object.
+	objInfo.Parts = fi.Parts
+
+	// Update storage class
+	if sc, ok := fi.Metadata[xhttp.AmzStorageClass]; ok {
+		objInfo.StorageClass = sc
+	} else {
+		objInfo.StorageClass = globalMinioDefaultStorageClass
+	}
+	objInfo.VersionPurgeStatus = fi.VersionPurgeStatus
+	// Success.
+	return objInfo
 }

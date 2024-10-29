@@ -18,19 +18,19 @@ package cmd
 
 import (
 	"container/list"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"os"
-	"path"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/minio/minio/cmd/crypto"
 )
+
+var timeSentinel = time.Unix(0, 0).UTC()
 
 // CacheStatusType - whether the request was served from cache.
 type CacheStatusType string
@@ -173,9 +173,6 @@ func backendDownError(err error) bool {
 
 // IsCacheable returns if the object should be saved in the cache.
 func (o ObjectInfo) IsCacheable() bool {
-	if globalCacheKMS != nil {
-		return true
-	}
 	_, ok := crypto.IsEncrypted(o.UserDefined)
 	return !ok
 }
@@ -241,29 +238,7 @@ func decryptCacheObjectETag(info *ObjectInfo) error {
 
 	switch {
 	case encrypted:
-		if globalCacheKMS == nil {
-			return errKMSNotConfigured
-		}
-		keyID, kmsKey, sealedKey, err := crypto.S3.ParseMetadata(info.UserDefined)
-		if err != nil {
-			return err
-		}
-		extKey, err := globalCacheKMS.DecryptKey(keyID, kmsKey, crypto.Context{info.Bucket: path.Join(info.Bucket, info.Name)})
-		if err != nil {
-			return err
-		}
-		var objectKey crypto.ObjectKey
-		if err = objectKey.Unseal(extKey, sealedKey, crypto.S3.String(), info.Bucket, info.Name); err != nil {
-			return err
-		}
-		etagStr := tryDecryptETag(objectKey[:], info.ETag, false)
-		// backend ETag was hex encoded before encrypting, so hex decode to get actual ETag
-		etag, err := hex.DecodeString(etagStr)
-		if err != nil {
-			return err
-		}
-		info.ETag = string(etag)
-		return nil
+		return errKMSNotConfigured
 	}
 
 	return nil

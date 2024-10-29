@@ -19,12 +19,11 @@ package cmd
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 
 	"github.com/gorilla/mux"
-	"github.com/minio/minio/cmd/logger"
 
+	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/bucket/policy"
 	"github.com/minio/minio/pkg/sync/errgroup"
 )
@@ -50,9 +49,9 @@ func concurrentDecryptETag(ctx context.Context, objects []ObjectInfo) {
 // Validate all the ListObjects query arguments, returns an APIErrorCode
 // if one of the args do not meet the required conditions.
 // Special conditions required by MinIO server are as below
-// - delimiter if set should be equal to '/', otherwise the request is rejected.
-// - marker if set should have a common prefix with 'prefix' param, otherwise
-//   the request is rejected.
+//   - delimiter if set should be equal to '/', otherwise the request is rejected.
+//   - marker if set should have a common prefix with 'prefix' param, otherwise
+//     the request is rejected.
 func validateListObjectsArgs(marker, delimiter, encodingType string, maxKeys int) APIErrorCode {
 	// Max keys cannot be negative.
 	if maxKeys < 0 {
@@ -256,50 +255,11 @@ func (api objectAPIHandlers) ListObjectsV2Handler(w http.ResponseWriter, r *http
 	writeSuccessResponseXML(w, encodeResponse(response))
 }
 
-func parseRequestToken(token string) (subToken string, nodeIndex int) {
-	if token == "" {
-		return token, -1
-	}
-	i := strings.Index(token, "@")
-	if i < 0 {
-		return token, -1
-	}
-	nodeIndex, err := strconv.Atoi(token[i+1:])
-	if err != nil {
-		return token, -1
-	}
-	subToken = token[:i]
-	return subToken, nodeIndex
-}
-
-func proxyRequestByToken(ctx context.Context, w http.ResponseWriter, r *http.Request, token string) (string, bool) {
-	subToken, nodeIndex := parseRequestToken(token)
-	if nodeIndex > 0 {
-		return subToken, proxyRequestByNodeIndex(ctx, w, r, nodeIndex)
-	}
-	return subToken, false
-}
-
-func proxyRequestByNodeIndex(ctx context.Context, w http.ResponseWriter, r *http.Request, index int) (success bool) {
-	if len(globalProxyEndpoints) == 0 {
-		return false
-	}
-	if index < 0 || index >= len(globalProxyEndpoints) {
-		return false
-	}
-	ep := globalProxyEndpoints[index]
-	if ep.IsLocal {
-		return false
-	}
-	return proxyRequest(ctx, w, r, ep)
-}
-
 // ListObjectsV1Handler - GET Bucket (List Objects) Version 1.
 // --------------------------
 // This implementation of the GET operation returns some or all (up to 10000)
 // of the objects in a bucket. You can use the request parameters as selection
 // criteria to return a subset of the objects in a bucket.
-//
 func (api objectAPIHandlers) ListObjectsV1Handler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "ListObjectsV1")
 

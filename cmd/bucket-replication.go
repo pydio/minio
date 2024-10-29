@@ -32,7 +32,6 @@ import (
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/pkg/bucket/bandwidth"
 	"github.com/minio/minio/pkg/bucket/replication"
 	"github.com/minio/minio/pkg/event"
 	iampolicy "github.com/minio/minio/pkg/iam/policy"
@@ -572,211 +571,7 @@ func getReplicationAction(oi1 ObjectInfo, oi2 minio.ObjectInfo) replicationActio
 // replicateObject replicates the specified version of the object to destination bucket
 // The source object is then updated to reflect the replication status.
 func replicateObject(ctx context.Context, ri ReplicateObjectInfo, objectAPI ObjectLayer) {
-	objInfo := ri.ObjectInfo
-	bucket := objInfo.Bucket
-	object := objInfo.Name
-
-	cfg, err := getReplicationConfig(ctx, bucket)
-	if err != nil {
-		logger.LogIf(ctx, err)
-		sendEvent(eventArgs{
-			EventName:  event.ObjectReplicationNotTracked,
-			BucketName: bucket,
-			Object:     objInfo,
-			Host:       "Internal: [Replication]",
-		})
-		return
-	}
-	tgt := globalBucketTargetSys.GetRemoteTargetClient(ctx, cfg.RoleArn)
-	if tgt == nil {
-		logger.LogIf(ctx, fmt.Errorf("failed to get target for bucket:%s arn:%s", bucket, cfg.RoleArn))
-		sendEvent(eventArgs{
-			EventName:  event.ObjectReplicationNotTracked,
-			BucketName: bucket,
-			Object:     objInfo,
-			Host:       "Internal: [Replication]",
-		})
-		return
-	}
-	gr, err := objectAPI.GetObjectNInfo(ctx, bucket, object, nil, http.Header{}, writeLock, ObjectOptions{
-		VersionID: objInfo.VersionID,
-	})
-	if err != nil {
-		sendEvent(eventArgs{
-			EventName:  event.ObjectReplicationNotTracked,
-			BucketName: bucket,
-			Object:     objInfo,
-			Host:       "Internal: [Replication]",
-		})
-		logger.LogIf(ctx, fmt.Errorf("Unable to update replicate for %s/%s(%s): %w", bucket, object, objInfo.VersionID, err))
-		return
-	}
-	defer gr.Close() // hold write lock for entire transaction
-
-	objInfo = gr.ObjInfo
-	size, err := objInfo.GetActualSize()
-	if err != nil {
-		logger.LogIf(ctx, err)
-		sendEvent(eventArgs{
-			EventName:  event.ObjectReplicationNotTracked,
-			BucketName: bucket,
-			Object:     objInfo,
-			Host:       "Internal: [Replication]",
-		})
-		return
-	}
-
-	dest := cfg.GetDestination()
-	if dest.Bucket == "" {
-		logger.LogIf(ctx, fmt.Errorf("Unable to replicate object %s(%s), bucket is empty", objInfo.Name, objInfo.VersionID))
-		sendEvent(eventArgs{
-			EventName:  event.ObjectReplicationNotTracked,
-			BucketName: bucket,
-			Object:     objInfo,
-			Host:       "Internal: [Replication]",
-		})
-		return
-	}
-
-	rtype := replicateAll
-	oi, err := tgt.StatObject(ctx, dest.Bucket, object, miniogo.StatObjectOptions{
-		VersionID: objInfo.VersionID,
-		Internal: miniogo.AdvancedGetOptions{
-			ReplicationProxyRequest: "false",
-		}})
-	if err == nil {
-		rtype = getReplicationAction(objInfo, oi)
-		if rtype == replicateNone {
-			// object with same VersionID already exists, replication kicked off by
-			// PutObject might have completed
-			return
-		}
-	}
-	replicationStatus := replication.Completed
-	// use core client to avoid doing multipart on PUT
-	c := &miniogo.Core{Client: tgt.Client}
-	if rtype != replicateAll {
-		// replicate metadata for object tagging/copy with metadata replacement
-		srcOpts := miniogo.CopySrcOptions{
-			Bucket:    dest.Bucket,
-			Object:    object,
-			VersionID: objInfo.VersionID,
-		}
-		dstOpts := miniogo.PutObjectOptions{
-			Internal: miniogo.AdvancedPutOptions{
-				SourceVersionID:    objInfo.VersionID,
-				ReplicationRequest: true, // always set this to distinguish between `mc mirror` replication and serverside
-			}}
-		if _, err = c.CopyObject(ctx, dest.Bucket, object, dest.Bucket, object, getCopyObjMetadata(objInfo, dest), srcOpts, dstOpts); err != nil {
-			replicationStatus = replication.Failed
-			logger.LogIf(ctx, fmt.Errorf("Unable to replicate metadata for object %s/%s(%s): %s", bucket, objInfo.Name, objInfo.VersionID, err))
-		}
-	} else {
-		target, err := globalBucketMetadataSys.GetBucketTarget(bucket, cfg.RoleArn)
-		if err != nil {
-			logger.LogIf(ctx, fmt.Errorf("failed to get target for replication bucket:%s cfg:%s err:%s", bucket, cfg.RoleArn, err))
-			sendEvent(eventArgs{
-				EventName:  event.ObjectReplicationNotTracked,
-				BucketName: bucket,
-				Object:     objInfo,
-				Host:       "Internal: [Replication]",
-			})
-			return
-		}
-
-		putOpts, err := putReplicationOpts(ctx, dest, objInfo)
-		if err != nil {
-			logger.LogIf(ctx, fmt.Errorf("failed to get target for replication bucket:%s cfg:%s err:%w", bucket, cfg.RoleArn, err))
-			sendEvent(eventArgs{
-				EventName:  event.ObjectReplicationNotTracked,
-				BucketName: bucket,
-				Object:     objInfo,
-				Host:       "Internal: [Replication]",
-			})
-			return
-		}
-
-		// Setup bandwidth throttling
-		peers, _ := globalEndpoints.peers()
-		totalNodesCount := len(peers)
-		if totalNodesCount == 0 {
-			totalNodesCount = 1 // For standalone erasure coding
-		}
-
-		var headerSize int
-		for k, v := range putOpts.Header() {
-			headerSize += len(k) + len(v)
-		}
-
-		opts := &bandwidth.MonitorReaderOptions{
-			Bucket:               objInfo.Bucket,
-			Object:               objInfo.Name,
-			HeaderSize:           headerSize,
-			BandwidthBytesPerSec: target.BandwidthLimit / int64(totalNodesCount),
-			ClusterBandwidth:     target.BandwidthLimit,
-		}
-
-		r := bandwidth.NewMonitoredReader(ctx, globalBucketMonitor, gr, opts)
-		if _, err = c.PutObject(ctx, dest.Bucket, object, r, size, "", "", putOpts); err != nil {
-			replicationStatus = replication.Failed
-			logger.LogIf(ctx, fmt.Errorf("Unable to replicate for object %s/%s(%s): %w", bucket, objInfo.Name, objInfo.VersionID, err))
-		}
-	}
-
-	prevReplStatus := objInfo.ReplicationStatus
-	objInfo.UserDefined[xhttp.AmzBucketReplicationStatus] = replicationStatus.String()
-	if objInfo.UserTags != "" {
-		objInfo.UserDefined[xhttp.AmzObjectTagging] = objInfo.UserTags
-	}
-
-	// FIXME: add support for missing replication events
-	// - event.ObjectReplicationMissedThreshold
-	// - event.ObjectReplicationReplicatedAfterThreshold
-	var eventName = event.ObjectReplicationComplete
-	if replicationStatus == replication.Failed {
-		eventName = event.ObjectReplicationFailed
-	}
-
-	z, ok := objectAPI.(*erasureServerPools)
-	if !ok {
-		return
-	}
-	// Leave metadata in `PENDING` state if inline replication fails to save iops
-	if ri.OpType == replication.HealReplicationType || replicationStatus == replication.Completed {
-		// This lower level implementation is necessary to avoid write locks from CopyObject.
-		poolIdx, err := z.getPoolIdx(ctx, bucket, object, objInfo.Size)
-		if err != nil {
-			logger.LogIf(ctx, fmt.Errorf("Unable to update replication metadata for %s/%s(%s): %w", bucket, objInfo.Name, objInfo.VersionID, err))
-		} else {
-			fi := FileInfo{}
-			fi.VersionID = objInfo.VersionID
-			fi.Metadata = make(map[string]string, len(objInfo.UserDefined))
-			for k, v := range objInfo.UserDefined {
-				fi.Metadata[k] = v
-			}
-			if err = z.serverPools[poolIdx].getHashedSet(object).updateObjectMeta(ctx, bucket, object, fi); err != nil {
-				logger.LogIf(ctx, fmt.Errorf("Unable to update replication metadata for %s/%s(%s): %w", bucket, objInfo.Name, objInfo.VersionID, err))
-			}
-		}
-		opType := replication.MetadataReplicationType
-		if rtype == replicateAll {
-			opType = replication.ObjectReplicationType
-		}
-		globalReplicationStats.Update(bucket, size, replicationStatus, prevReplStatus, opType)
-		sendEvent(eventArgs{
-			EventName:  eventName,
-			BucketName: bucket,
-			Object:     objInfo,
-			Host:       "Internal: [Replication]",
-		})
-	}
-	// re-queue failures once more - keep a retry count to avoid flooding the queue if
-	// the target site is down. Leave it to scanner to catch up instead.
-	if replicationStatus == replication.Failed && ri.RetryCount < 1 {
-		ri.OpType = replication.HealReplicationType
-		ri.RetryCount++
-		globalReplicationPool.queueReplicaTask(ctx, ri)
-	}
+	return
 }
 
 // filterReplicationStatusMetadata filters replication status metadata for COPY
@@ -889,7 +684,7 @@ func (p *ReplicationPool) AddWorker() {
 
 }
 
-//Resize replication pool to new size
+// Resize replication pool to new size
 func (p *ReplicationPool) Resize(n int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

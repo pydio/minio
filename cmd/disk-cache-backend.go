@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/md5"
-	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
@@ -34,14 +33,14 @@ import (
 	"time"
 
 	"github.com/djherbis/atime"
+	"github.com/minio/sio"
+
 	"github.com/minio/minio/cmd/config/cache"
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/disk"
 	"github.com/minio/minio/pkg/fips"
-	"github.com/minio/minio/pkg/kms"
-	"github.com/minio/sio"
 )
 
 const (
@@ -475,10 +474,6 @@ func (c *diskCache) statRange(ctx context.Context, bucket, object string, rs *HT
 	}
 
 	actualRngSize := uint64(length)
-	if globalCacheKMS != nil {
-		actualRngSize, _ = sio.EncryptedSize(uint64(length))
-	}
-
 	rng := rs.String(int64(actualSize))
 	rngFile, ok := meta.Ranges[rng]
 	if !ok {
@@ -669,25 +664,9 @@ func newCacheEncryptReader(content io.Reader, bucket, object string, metadata ma
 	}
 	return reader, nil
 }
+
 func newCacheEncryptMetadata(bucket, object string, metadata map[string]string) ([]byte, error) {
-	var sealedKey crypto.SealedKey
-	if globalCacheKMS == nil {
-		return nil, errKMSNotConfigured
-	}
-	key, err := globalCacheKMS.GenerateKey("", kms.Context{bucket: pathJoin(bucket, object)})
-	if err != nil {
-		return nil, err
-	}
-
-	objectKey := crypto.GenerateKey(key.Plaintext, rand.Reader)
-	sealedKey = objectKey.Seal(key.Plaintext, crypto.GenerateIV(rand.Reader), crypto.S3.String(), bucket, object)
-	crypto.S3.CreateMetadata(metadata, key.KeyID, key.Ciphertext, sealedKey)
-
-	if etag, ok := metadata["etag"]; ok {
-		metadata["etag"] = hex.EncodeToString(objectKey.SealETag([]byte(etag)))
-	}
-	metadata[SSECacheEncrypted] = ""
-	return objectKey[:], nil
+	return nil, errKMSNotConfigured
 }
 
 // Caches the object to disk
@@ -731,13 +710,6 @@ func (c *diskCache) Put(ctx context.Context, bucket, object string, data io.Read
 	var metadata = cloneMSS(opts.UserDefined)
 	var reader = data
 	var actualSize = uint64(size)
-	if globalCacheKMS != nil {
-		reader, err = newCacheEncryptReader(data, bucket, object, metadata)
-		if err != nil {
-			return oi, err
-		}
-		actualSize, _ = sio.EncryptedSize(uint64(size))
-	}
 	n, md5sum, err := c.bitrotWriteToCache(cachePath, cacheDataFile, reader, actualSize)
 	if IsErr(err, baseErrs...) {
 		// take the cache drive offline
@@ -787,15 +759,6 @@ func (c *diskCache) putRange(ctx context.Context, bucket, object string, data io
 	var actualSize = uint64(rlen)
 	// objSize is the actual size of object (with encryption overhead if any)
 	var objSize = uint64(size)
-	if globalCacheKMS != nil {
-		reader, err = newCacheEncryptReader(data, bucket, object, metadata)
-		if err != nil {
-			return err
-		}
-		actualSize, _ = sio.EncryptedSize(uint64(rlen))
-		objSize, _ = sio.EncryptedSize(uint64(size))
-
-	}
 	cacheFile := MustGetUUID()
 	n, _, err := c.bitrotWriteToCache(cachePath, cacheFile, reader, actualSize)
 	if IsErr(err, baseErrs...) {
@@ -962,10 +925,6 @@ func (c *diskCache) Get(ctx context.Context, bucket, object string, rs *HTTPRang
 	gr, gerr := fn(pr, h, opts.CheckPrecondFn, pipeCloser)
 	if gerr != nil {
 		return gr, numHits, gerr
-	}
-	if globalCacheKMS != nil {
-		// clean up internal SSE cache metadata
-		delete(gr.ObjInfo.UserDefined, xhttp.AmzServerSideEncryption)
 	}
 	if !rngInfo.Empty() {
 		// overlay Size with actual object size and not the range size

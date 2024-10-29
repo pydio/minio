@@ -20,12 +20,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/minio/minio/cmd/config/cache"
@@ -551,6 +551,14 @@ func (c *cacheObjects) getCacheToLoc(ctx context.Context, bucket, object string)
 	return nil, errDiskNotFound
 }
 
+func crcHashMod(key string, cardinality int) int {
+	if cardinality <= 0 {
+		return -1
+	}
+	keyCrc := crc32.Checksum([]byte(key), crc32.IEEETable)
+	return int(keyCrc % uint32(cardinality))
+}
+
 // Compute a unique hash sum for bucket and object
 func (c *cacheObjects) hashIndex(bucket, object string) int {
 	return crcHashMod(pathJoin(bucket, object), len(c.cache))
@@ -743,70 +751,6 @@ func (c *cacheObjects) queueWritebackRetry(oi ObjectInfo) {
 		c.uploadObject(GlobalContext, oi)
 	default:
 	}
-}
-
-// Returns cacheObjects for use by Server.
-func newServerCacheObjects(ctx context.Context, config cache.Config) (CacheObjectLayer, error) {
-	// list of disk caches for cache "drives" specified in config.json or MINIO_CACHE_DRIVES env var.
-	cache, migrateSw, err := newCache(config)
-	if err != nil {
-		return nil, err
-	}
-	c := &cacheObjects{
-		cache:           cache,
-		exclude:         config.Exclude,
-		after:           config.After,
-		migrating:       migrateSw,
-		migMutex:        sync.Mutex{},
-		commitWriteback: config.CommitWriteback,
-		cacheStats:      newCacheStats(),
-		InnerGetObjectInfoFn: func(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
-			return newObjectLayerFn().GetObjectInfo(ctx, bucket, object, opts)
-		},
-		InnerGetObjectNInfoFn: func(ctx context.Context, bucket, object string, rs *HTTPRangeSpec, h http.Header, lockType LockType, opts ObjectOptions) (gr *GetObjectReader, err error) {
-			return newObjectLayerFn().GetObjectNInfo(ctx, bucket, object, rs, h, lockType, opts)
-		},
-		InnerDeleteObjectFn: func(ctx context.Context, bucket, object string, opts ObjectOptions) (ObjectInfo, error) {
-			return newObjectLayerFn().DeleteObject(ctx, bucket, object, opts)
-		},
-		InnerPutObjectFn: func(ctx context.Context, bucket, object string, data *PutObjReader, opts ObjectOptions) (objInfo ObjectInfo, err error) {
-			return newObjectLayerFn().PutObject(ctx, bucket, object, data, opts)
-		},
-		InnerCopyObjectFn: func(ctx context.Context, srcBucket, srcObject, destBucket, destObject string, srcInfo ObjectInfo, srcOpts, dstOpts ObjectOptions) (objInfo ObjectInfo, err error) {
-			return newObjectLayerFn().CopyObject(ctx, srcBucket, srcObject, destBucket, destObject, srcInfo, srcOpts, dstOpts)
-		},
-	}
-	c.cacheStats.GetDiskStats = func() []CacheDiskStats {
-		cacheDiskStats := make([]CacheDiskStats, len(c.cache))
-		for i := range c.cache {
-			dcache := c.cache[i]
-			cacheDiskStats[i] = CacheDiskStats{}
-			if dcache != nil {
-				info, err := getDiskInfo(dcache.dir)
-				logger.LogIf(ctx, err)
-				cacheDiskStats[i].UsageSize = info.Used
-				cacheDiskStats[i].TotalCapacity = info.Total
-				cacheDiskStats[i].Dir = dcache.stats.Dir
-				atomic.StoreInt32(&cacheDiskStats[i].UsageState, atomic.LoadInt32(&dcache.stats.UsageState))
-				atomic.StoreUint64(&cacheDiskStats[i].UsagePercent, atomic.LoadUint64(&dcache.stats.UsagePercent))
-			}
-		}
-		return cacheDiskStats
-	}
-	if migrateSw {
-		go c.migrateCacheFromV1toV2(ctx)
-	}
-	go c.gc(ctx)
-	if c.commitWriteback {
-		c.wbRetryCh = make(chan ObjectInfo, 10000)
-		go func() {
-			<-GlobalContext.Done()
-			close(c.wbRetryCh)
-		}()
-		go c.queuePendingWriteback(ctx)
-	}
-
-	return c, nil
 }
 
 func (c *cacheObjects) gc(ctx context.Context) {

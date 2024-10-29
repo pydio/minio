@@ -154,20 +154,11 @@ func (sys *BucketMetadataSys) Update(bucket string, configFile string, configDat
 	case bucketQuotaConfigFile:
 		meta.QuotaConfigJSON = configData
 	case objectLockConfig:
-		if !globalIsErasure && !globalIsDistErasure {
-			return NotImplemented{}
-		}
-		meta.ObjectLockConfigXML = configData
+		return NotImplemented{}
 	case bucketVersioningConfig:
-		if !globalIsErasure && !globalIsDistErasure {
-			return NotImplemented{}
-		}
-		meta.VersioningConfigXML = configData
+		return NotImplemented{}
 	case bucketReplicationConfig:
-		if !globalIsErasure && !globalIsDistErasure {
-			return NotImplemented{}
-		}
-		meta.ReplicationConfigXML = configData
+		return NotImplemented{}
 	case bucketTargetsFile:
 		meta.BucketTargetsConfigJSON, meta.BucketTargetsConfigMetaJSON, err = encryptBucketMetadata(meta.Name, configData, crypto.Context{
 			bucket:            meta.Name,
@@ -446,10 +437,13 @@ func (sys *BucketMetadataSys) concurrentLoad(ctx context.Context, buckets []Buck
 	for index := range buckets {
 		index := index
 		g.Go(func() error {
-			_, _ = objAPI.HealBucket(ctx, buckets[index].Name, madmin.HealOpts{
-				// Ensure heal opts for bucket metadata be deep healed all the time.
-				ScanMode: madmin.HealDeepScan,
-			})
+			/*
+				_, _ = objAPI.HealBucket(ctx, buckets[index].Name, madmin.HealOpts{
+					// Ensure heal opts for bucket metadata be deep healed all the time.
+					ScanMode: madmin.HealDeepScan,
+				})
+
+			*/
 			meta, err := loadBucketMetadata(ctx, objAPI, buckets[index].Name)
 			if err != nil {
 				return err

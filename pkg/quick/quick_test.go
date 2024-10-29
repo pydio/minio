@@ -34,7 +34,7 @@ func TestReadVersion(t *testing.T) {
 		Version string
 	}
 	saveMe := myStruct{"1"}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestReadVersion(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	version, err := GetVersion("test.json", nil)
+	version, err := GetVersion("test.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestReadVersionErr(t *testing.T) {
 		Version int
 	}
 	saveMe := myStruct{1}
-	_, err := NewConfig(&saveMe, nil)
+	_, err := NewConfig(&saveMe)
 	if err == nil {
 		t.Fatal("Unexpected should fail in initialization for bad input")
 	}
@@ -67,7 +67,7 @@ func TestReadVersionErr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = GetVersion("test.json", nil)
+	_, err = GetVersion("test.json")
 	if err == nil {
 		t.Fatal("Unexpected should fail to fetch version")
 	}
@@ -77,7 +77,7 @@ func TestReadVersionErr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = GetVersion("test.json", nil)
+	_, err = GetVersion("test.json")
 	if err == nil {
 		t.Fatal("Unexpected should fail to fetch version")
 	}
@@ -93,7 +93,7 @@ func TestSaveFailOnDir(t *testing.T) {
 		Version string
 	}
 	saveMe := myStruct{"1"}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestLoadFile(t *testing.T) {
 		Directories []string
 	}
 	saveMe := myStruct{}
-	_, err := LoadConfig("test.json", nil, &saveMe)
+	_, err := LoadConfig("test.json", &saveMe)
 	if err == nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,11 @@ func TestLoadFile(t *testing.T) {
 	if err = file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	_, err = LoadConfig("test.json", nil, &saveMe)
+	_, err = LoadConfig("test.json", &saveMe)
 	if err == nil {
 		t.Fatal("Unexpected should fail to load empty JSON")
 	}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +184,7 @@ func TestLoadFile(t *testing.T) {
 	}
 
 	saveMe = myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
-	config, err = NewConfig(&saveMe, nil)
+	config, err = NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +193,7 @@ func TestLoadFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	saveMe1 := myStruct{}
-	_, err = LoadConfig("test.json", nil, &saveMe1)
+	_, err = LoadConfig("test.json", &saveMe1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ directories:
 	saveMe := myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
 
 	// Save format using
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ directories:
 
 	// Check if the loaded data is the same as the saved one
 	loadMe := myStruct{}
-	config, err = NewConfig(&loadMe, nil)
+	config, err = NewConfig(&loadMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestJSONFormat(t *testing.T) {
 	saveMe := myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
 
 	// Save format using
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestJSONFormat(t *testing.T) {
 
 	// Check if the loaded data is the same as the saved one
 	loadMe := myStruct{}
-	config, err = NewConfig(&loadMe, nil)
+	config, err = NewConfig(&loadMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +349,7 @@ func TestSaveLoad(t *testing.T) {
 		Directories []string
 	}
 	saveMe := myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +359,7 @@ func TestSaveLoad(t *testing.T) {
 	}
 
 	loadMe := myStruct{Version: "1"}
-	newConfig, err := NewConfig(&loadMe, nil)
+	newConfig, err := NewConfig(&loadMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +391,7 @@ func TestSaveBackup(t *testing.T) {
 		Directories []string
 	}
 	saveMe := myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,7 +401,7 @@ func TestSaveBackup(t *testing.T) {
 	}
 
 	loadMe := myStruct{Version: "1"}
-	newConfig, err := NewConfig(&loadMe, nil)
+	newConfig, err := NewConfig(&loadMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -422,7 +422,7 @@ func TestSaveBackup(t *testing.T) {
 		t.Fatal("Expected to mismatch but succeeded instead")
 	}
 
-	config, err = NewConfig(&mismatch, nil)
+	config, err = NewConfig(&mismatch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,7 +440,7 @@ func TestDiff(t *testing.T) {
 		Directories []string
 	}
 	saveMe := myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -453,7 +453,7 @@ func TestDiff(t *testing.T) {
 	}
 
 	mismatch := myNewConfigStruct{"1", "nopassword", []string{"Work", "documents", "Music"}}
-	newConfig, err := NewConfig(&mismatch, nil)
+	newConfig, err := NewConfig(&mismatch)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,13 +480,13 @@ func TestDeepDiff(t *testing.T) {
 		Directories []string
 	}
 	saveMe := myStruct{"1", "guest", "nopassword", []string{"Work", "Documents", "Music"}}
-	config, err := NewConfig(&saveMe, nil)
+	config, err := NewConfig(&saveMe)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	mismatch := myStruct{"1", "Guest", "nopassword", []string{"Work", "documents", "Music"}}
-	newConfig, err := NewConfig(&mismatch, nil)
+	newConfig, err := NewConfig(&mismatch)
 	if err != nil {
 		t.Fatal(err)
 	}

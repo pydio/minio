@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/handlers"
 	jsonrpc "github.com/minio/minio/pkg/rpc"
@@ -63,6 +64,7 @@ func (r *recordRequest) Read(p []byte) (n int, err error) {
 	}
 	return n, err
 }
+
 func (r *recordRequest) Size() int {
 	sz := r.bytesRead
 	for k, v := range r.headers {
@@ -127,9 +129,6 @@ func WebTrace(ri *jsonrpc.RequestInfo) trace.Info {
 	now := time.Now().UTC()
 	t := trace.Info{TraceType: trace.HTTP, FuncName: name, Time: now}
 	t.NodeName = r.Host
-	if globalIsDistErasure {
-		t.NodeName = globalLocalNodeName
-	}
 	if t.NodeName == "" {
 		t.NodeName = globalLocalNodeName
 	}
@@ -198,10 +197,6 @@ func Trace(f http.HandlerFunc, logBody bool, w http.ResponseWriter, r *http.Requ
 	t := trace.Info{TraceType: trace.HTTP, FuncName: name, Time: now}
 
 	t.NodeName = r.Host
-	if globalIsDistErasure {
-		t.NodeName = globalLocalNodeName
-	}
-
 	if t.NodeName == "" {
 		t.NodeName = globalLocalNodeName
 	}

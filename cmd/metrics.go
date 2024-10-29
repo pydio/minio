@@ -18,14 +18,13 @@ package cmd
 
 import (
 	"net/http"
-	"strings"
 	"sync/atomic"
-	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/madmin"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 var (
@@ -100,9 +99,8 @@ func (c *minioCollector) Collect(ch chan<- prometheus.Metric) {
 	bucketUsageMetricsPrometheus(ch)
 	networkMetricsPrometheus(ch)
 	httpMetricsPrometheus(ch)
-	cacheMetricsPrometheus(ch)
 	gatewayMetricsPrometheus(ch)
-	healingMetricsPrometheus(ch)
+
 }
 
 func nodeHealthMetricsPrometheus(ch chan<- prometheus.Metric) {
@@ -123,65 +121,6 @@ func nodeHealthMetricsPrometheus(ch chan<- prometheus.Metric) {
 		prometheus.GaugeValue,
 		float64(nodesDown),
 	)
-}
-
-// collects healing specific metrics for MinIO instance in Prometheus specific format
-// and sends to given channel
-func healingMetricsPrometheus(ch chan<- prometheus.Metric) {
-	if !globalIsErasure {
-		return
-	}
-	bgSeq, exists := globalBackgroundHealState.getHealSequenceByToken(bgHealingUUID)
-	if !exists {
-		return
-	}
-
-	var dur time.Duration
-	if !bgSeq.lastHealActivity.IsZero() {
-		dur = time.Since(bgSeq.lastHealActivity)
-	}
-
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(
-			prometheus.BuildFQName(healMetricsNamespace, "time", "since_last_activity"),
-			"Time elapsed (in nano seconds) since last self healing activity. This is set to -1 until initial self heal activity",
-			nil, nil),
-		prometheus.GaugeValue,
-		float64(dur),
-	)
-	for k, v := range bgSeq.getScannedItemsMap() {
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName(healMetricsNamespace, "objects", "scanned"),
-				"Objects scanned in current self healing run",
-				[]string{"type"}, nil),
-			prometheus.GaugeValue,
-			float64(v), string(k),
-		)
-	}
-	for k, v := range bgSeq.getHealedItemsMap() {
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName(healMetricsNamespace, "objects", "healed"),
-				"Objects healed in current self healing run",
-				[]string{"type"}, nil),
-			prometheus.GaugeValue,
-			float64(v), string(k),
-		)
-	}
-	for k, v := range bgSeq.gethealFailedItemsMap() {
-		// healFailedItemsMap stores the endpoint and volume state separated by comma,
-		// split the fields and pass to channel at correct index
-		s := strings.Split(k, ",")
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName(healMetricsNamespace, "objects", "heal_failed"),
-				"Objects for which healing failed in current self healing run",
-				[]string{"mount_path", "volume_status"}, nil),
-			prometheus.GaugeValue,
-			float64(v), string(s[0]), string(s[1]),
-		)
-	}
 }
 
 // collects gateway specific metrics for MinIO instance in Prometheus specific format
@@ -255,82 +194,6 @@ func gatewayMetricsPrometheus(ch chan<- prometheus.Metric) {
 		float64(atomic.LoadUint64(&s.Post)),
 		http.MethodPost,
 	)
-}
-
-// collects cache metrics for MinIO server in Prometheus specific format
-// and sends to given channel
-func cacheMetricsPrometheus(ch chan<- prometheus.Metric) {
-	cacheObjLayer := newCachedObjectLayerFn()
-	// Service not initialized yet
-	if cacheObjLayer == nil {
-		return
-	}
-
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(
-			prometheus.BuildFQName(cacheNamespace, "hits", "total"),
-			"Total number of disk cache hits in current MinIO instance",
-			nil, nil),
-		prometheus.CounterValue,
-		float64(cacheObjLayer.CacheStats().getHits()),
-	)
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(
-			prometheus.BuildFQName(cacheNamespace, "misses", "total"),
-			"Total number of disk cache misses in current MinIO instance",
-			nil, nil),
-		prometheus.CounterValue,
-		float64(cacheObjLayer.CacheStats().getMisses()),
-	)
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(
-			prometheus.BuildFQName(cacheNamespace, "data", "served"),
-			"Total number of bytes served from cache of current MinIO instance",
-			nil, nil),
-		prometheus.CounterValue,
-		float64(cacheObjLayer.CacheStats().getBytesServed()),
-	)
-	for _, cdStats := range cacheObjLayer.CacheStats().GetDiskStats() {
-		// Cache disk usage percentage
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName(cacheNamespace, "usage", "percent"),
-				"Total percentage cache usage",
-				[]string{"disk"}, nil),
-			prometheus.GaugeValue,
-			float64(cdStats.UsagePercent),
-			cdStats.Dir,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName(cacheNamespace, "usage", "high"),
-				"Indicates cache usage is high or low, relative to current cache 'quota' settings",
-				[]string{"disk"}, nil),
-			prometheus.GaugeValue,
-			float64(cdStats.UsageState),
-			cdStats.Dir,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName("cache", "usage", "size"),
-				"Indicates current cache usage in bytes",
-				[]string{"disk"}, nil),
-			prometheus.GaugeValue,
-			float64(cdStats.UsageSize),
-			cdStats.Dir,
-		)
-
-		ch <- prometheus.MustNewConstMetric(
-			prometheus.NewDesc(
-				prometheus.BuildFQName("cache", "total", "size"),
-				"Indicates total size of cache disk",
-				[]string{"disk"}, nil),
-			prometheus.GaugeValue,
-			float64(cdStats.TotalCapacity),
-			cdStats.Dir,
-		)
-	}
 }
 
 // collects http metrics for MinIO server in Prometheus specific format
@@ -621,9 +484,6 @@ func storageMetricsPrometheus(ch chan<- prometheus.Metric) {
 		Host: globalLocalNodeName,
 	})
 
-	onlineDisks, offlineDisks := getOnlineOfflineDisksStats(server.Disks)
-	totalDisks := offlineDisks.Merge(onlineDisks)
-
 	// Report total capacity
 	ch <- prometheus.MustNewConstMetric(
 		prometheus.NewDesc(
@@ -662,26 +522,6 @@ func storageMetricsPrometheus(ch chan<- prometheus.Metric) {
 			nil, nil),
 		prometheus.GaugeValue,
 		GetTotalUsableCapacityFree(server.Disks, s),
-	)
-
-	// MinIO Offline Disks per node
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(
-			prometheus.BuildFQName(minioNamespace, "disks", "offline"),
-			"Total number of offline disks in current MinIO server instance",
-			nil, nil),
-		prometheus.GaugeValue,
-		float64(offlineDisks.Sum()),
-	)
-
-	// MinIO Total Disks per node
-	ch <- prometheus.MustNewConstMetric(
-		prometheus.NewDesc(
-			prometheus.BuildFQName(minioNamespace, "disks", "total"),
-			"Total number of disks for current MinIO server instance",
-			nil, nil),
-		prometheus.GaugeValue,
-		float64(totalDisks.Sum()),
 	)
 
 	for _, disk := range server.Disks {

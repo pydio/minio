@@ -25,6 +25,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+
 	miniogopolicy "github.com/minio/minio-go/v7/pkg/policy"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
@@ -170,12 +171,7 @@ func getConditionValues(r *http.Request, lc string, username string, claims map[
 	for k, v := range claims {
 		vStr, ok := v.(string)
 		if ok {
-			// Special case for AD/LDAP STS users
-			if k == ldapUser {
-				args["user"] = []string{vStr}
-			} else {
-				args[k] = []string{vStr}
-			}
+			args[k] = []string{vStr}
 		}
 	}
 
