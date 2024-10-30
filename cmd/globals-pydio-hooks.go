@@ -62,6 +62,10 @@ func HookExtractReqParams(extractor ReqParamExtractor) {
 }
 
 func applyHooksExtractReqParams(req *http.Request, m map[string]string) {
+	g := mustGlobalsFromContext(req.Context())
+	for _, f := range g.ReqParamExtractors {
+		f(req, m)
+	}
 	for _, f := range pydioReqParamHooks {
 		f(req, m)
 	}

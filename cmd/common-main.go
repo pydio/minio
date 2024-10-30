@@ -143,13 +143,6 @@ func handleCommonCmdArgs(ctx *cli.Context, globals *Globals) {
 	}
 	logger.FatalIf(CheckLocalServerAddr(cliCtx.Addr), "Unable to validate passed arguments")
 
-	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
-	// to IPv6 address ie minio will start listening on IPv6 address whereas another
-	// (non-)minio process is listening on IPv4 of given port.
-	// To avoid this error situation we check for port availability.
-	globals.MinioHost, globals.MinioPort = mustSplitHostPort(cliCtx.Addr)
-	logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the gateway")
-
 	// Check "no-compat" flag from command line argument.
 	cliCtx.StrictS3Compat = true
 	if ctx.IsSet("no-compat") || ctx.GlobalIsSet("no-compat") {
@@ -184,6 +177,7 @@ func initRouter(g *Globals) *mux.Router {
 
 	//hh := append(globalHandlers, injectGlobalsHandler(globals))
 	hh := append([]mux.MiddlewareFunc{injectGlobalsHandler(g)}, globalHandlers...)
+	hh = append(hh, g.CustomHandlers...)
 	router.Use(hh...)
 	return router
 }

@@ -243,7 +243,33 @@ func initAllSubsystems(ctx context.Context, globals *Globals, newObject ObjectLa
 // serverMain handler called for 'minio server' command.
 func serverMain(ctx *cli.Context) {
 	globals := NewGlobals()
+
+	// Handle common command args.
+	handleCommonCmdArgs(ctx, globals)
+
+	// Handle common env vars.
+	handleCommonEnvVars(globals)
+
+	StartServerWithGlobals(globals, ctx.Args()...)
+}
+
+// StartServerWithGlobals can launch a server with instanciated globals configuration
+func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 	defer globals.DNSCache.Stop()
+
+	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
+	// to IPv6 address ie minio will start listening on IPv6 address whereas another
+	// (non-)minio process is listening on IPv4 of given port.
+	// To avoid this error situation we check for port availability.
+	globals.MinioHost, globals.MinioPort = mustSplitHostPort(globals.CliContext.Addr)
+	logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the server")
+
+	if globals.CliContext.Quiet {
+		logger.EnableQuiet()
+	}
+	if globals.CliContext.JSON {
+		logger.EnableJSON()
+	}
 
 	signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
@@ -254,16 +280,12 @@ func serverMain(ctx *cli.Context) {
 
 	compressSelfTest()
 
-	// Handle common command args.
-	handleCommonCmdArgs(ctx, globals)
-
-	// Handle common env vars.
-	handleCommonEnvVars(globals)
+	initHelp() // this initialize some configuration defaults values
 
 	initTlsVars(globals)
 
 	var err error
-	globals.Endpoints, _, err = createServerEndpoints(globals.CliContext.Addr, globals.MinioPort, ctx.Args()...)
+	globals.Endpoints, _, err = createServerEndpoints(globals.CliContext.Addr, globals.MinioPort, folderNames...)
 	logger.FatalIf(err, "Invalid command line arguments")
 	globals.LocalNodeName = GetLocalPeer(globals.Endpoints, globals.MinioHost, globals.MinioPort)
 

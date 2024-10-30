@@ -26,6 +26,7 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+	"github.com/gorilla/mux"
 
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/config/compress"
@@ -221,6 +222,9 @@ type Globals struct {
 
 	ServerConfig   config.Config
 	ServerConfigMu sync.RWMutex
+
+	CustomHandlers     []mux.MiddlewareFunc
+	ReqParamExtractors []ReqParamExtractor
 }
 
 func NewGlobals() *Globals {

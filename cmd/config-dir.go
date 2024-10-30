@@ -40,6 +40,12 @@ const (
 	privateKeyFile = "private.key"
 )
 
+func NewConfigDir(p string) *ConfigDir {
+	return &ConfigDir{
+		path: p,
+	}
+}
+
 // ConfigDir - points to a user set directory.
 type ConfigDir struct {
 	path string
