@@ -30,6 +30,7 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/pkg/auth"
 )
@@ -62,18 +63,21 @@ func getChunkSignature(cred auth.Credentials, seedSignature string, region strin
 }
 
 // calculateSeedSignature - Calculate seed signature in accordance with
-//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
+//   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
+//
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
 func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature string, region string, date time.Time, errCode APIErrorCode) {
 	// Copy request.
 	req := *r
 
+	globals := mustGlobalsFromContext(r.Context())
+
 	// Save authorization header.
 	v4Auth := req.Header.Get(xhttp.Authorization)
 
 	// Parse signature version '4' header.
-	signV4Values, errCode := parseSignV4(v4Auth, globalServerRegion, serviceS3)
+	signV4Values, errCode := parseSignV4(v4Auth, globals.ServerRegion, serviceS3)
 	if errCode != ErrNone {
 		return cred, "", "", time.Time{}, errCode
 	}
@@ -92,7 +96,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 		return cred, "", "", time.Time{}, errCode
 	}
 
-	cred, _, errCode = checkKeyValid(signV4Values.Credential.accessKey)
+	cred, _, errCode = checkKeyValid(r.Context(), signV4Values.Credential.accessKey)
 	if errCode != ErrNone {
 		return cred, "", "", time.Time{}, errCode
 	}
@@ -409,7 +413,8 @@ const s3ChunkSignatureStr = ";chunk-signature="
 
 // parses3ChunkExtension removes any s3 specific chunk-extension from buf.
 // For example,
-//     "10000;chunk-signature=..." => "10000", "chunk-signature=..."
+//
+//	"10000;chunk-signature=..." => "10000", "chunk-signature=..."
 func parseS3ChunkExtension(buf []byte) ([]byte, []byte) {
 	buf = trimTrailingWhitespace(buf)
 	semi := bytes.Index(buf, []byte(s3ChunkSignatureStr))

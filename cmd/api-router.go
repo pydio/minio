@@ -27,30 +27,6 @@ import (
 	"github.com/minio/minio/pkg/wildcard"
 )
 
-func newHTTPServerFn() *xhttp.Server {
-	globalObjLayerMutex.RLock()
-	defer globalObjLayerMutex.RUnlock()
-	return globalHTTPServer
-}
-
-func setHTTPServer(h *xhttp.Server) {
-	globalObjLayerMutex.Lock()
-	globalHTTPServer = h
-	globalObjLayerMutex.Unlock()
-}
-
-func newObjectLayerFn() ObjectLayer {
-	globalObjLayerMutex.RLock()
-	defer globalObjLayerMutex.RUnlock()
-	return globalObjectAPI
-}
-
-func setObjectLayer(o ObjectLayer) {
-	globalObjLayerMutex.Lock()
-	globalObjectAPI = o
-	globalObjLayerMutex.Unlock()
-}
-
 // objectAPIHandler implements and provides http handlers for S3 API.
 type objectAPIHandlers struct {
 	*Globals
@@ -68,7 +44,7 @@ func getHost(r *http.Request) string {
 }
 
 func notImplementedHandler(w http.ResponseWriter, r *http.Request) {
-	writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+	writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrNotImplemented), r.URL, guessIsBrowserReq(r))
 }
 
 type rejectedAPI struct {
@@ -169,14 +145,14 @@ func registerAPIRouter(globals *Globals, router *mux.Router) {
 	// Initialize API.
 	api := objectAPIHandlers{
 		Globals:   globals,
-		ObjectAPI: newObjectLayerFn,
+		ObjectAPI: globals.newObjectLayerFn,
 	}
 
 	// API Router
 	apiRouter := router.PathPrefix(SlashSeparator).Subrouter()
 
 	var routers []*mux.Router
-	for _, domainName := range globalDomainNames {
+	for _, domainName := range globals.DomainNames {
 		if IsKubernetes() {
 			routers = append(routers, apiRouter.MatcherFunc(func(r *http.Request, match *mux.RouteMatch) bool {
 				host, _, err := net.SplitHostPort(getHost(r))
@@ -432,7 +408,7 @@ func registerAPIRouter(globals *Globals, router *mux.Router) {
 }
 
 // corsHandler handler for CORS (Cross Origin Resource Sharing)
-func corsHandler(handler http.Handler) http.Handler {
+func (gl *Globals) corsHandler(handler http.Handler) http.Handler {
 	commonS3Headers := []string{
 		xhttp.Date,
 		xhttp.ETag,
@@ -457,7 +433,7 @@ func corsHandler(handler http.Handler) http.Handler {
 
 	return cors.New(cors.Options{
 		AllowOriginFunc: func(origin string) bool {
-			for _, allowedOrigin := range globalAPIConfig.getCorsAllowOrigins() {
+			for _, allowedOrigin := range gl.APIConfig.getCorsAllowOrigins() {
 				if wildcard.MatchSimple(allowedOrigin, origin) {
 					return true
 				}

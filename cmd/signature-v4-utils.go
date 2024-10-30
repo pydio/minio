@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"net/http"
@@ -104,13 +105,14 @@ func isValidRegion(reqRegion string, confRegion string) bool {
 
 // check if the access key is valid and recognized, additionally
 // also returns if the access key is owner/admin.
-func checkKeyValid(accessKey string) (auth.Credentials, bool, APIErrorCode) {
+func checkKeyValid(ctx context.Context, accessKey string) (auth.Credentials, bool, APIErrorCode) {
+	globals := mustGlobalsFromContext(ctx)
 	var owner = true
-	var cred = globalActiveCred
+	var cred = globals.ActiveCred
 	if cred.AccessKey != accessKey {
 		// Check if the access key is part of users credentials.
 		var ok bool
-		if cred, ok = globalIAMSys.GetUser(accessKey); !ok {
+		if cred, ok = globals.IAMSys.GetUser(accessKey); !ok {
 			return cred, false, ErrInvalidAccessKeyID
 		}
 		owner = false

@@ -39,12 +39,12 @@ import (
 type IAMObjectStore struct {
 	// Protect assignment to objAPI
 	sync.RWMutex
-
-	objAPI ObjectLayer
+	Globals *Globals
+	objAPI  ObjectLayer
 }
 
-func newIAMObjectStore(objAPI ObjectLayer) *IAMObjectStore {
-	return &IAMObjectStore{objAPI: objAPI}
+func newIAMObjectStore(globals *Globals, objAPI ObjectLayer) *IAMObjectStore {
+	return &IAMObjectStore{objAPI: objAPI, Globals: globals}
 }
 
 func (iamOS *IAMObjectStore) lock() {
@@ -209,22 +209,22 @@ func (iamOS *IAMObjectStore) saveIAMConfig(ctx context.Context, item interface{}
 	if err != nil {
 		return err
 	}
-	if globalConfigEncrypted {
-		data, err = madmin.EncryptData(globalActiveCred.String(), data)
+	if iamOS.Globals.ConfigEncrypted {
+		data, err = madmin.EncryptData(iamOS.Globals.ActiveCred.String(), data)
 		if err != nil {
 			return err
 		}
 	}
-	return saveConfig(ctx, iamOS.objAPI, path, data)
+	return iamOS.Globals.saveConfig(ctx, iamOS.objAPI, path, data)
 }
 
 func (iamOS *IAMObjectStore) loadIAMConfig(ctx context.Context, item interface{}, path string) error {
-	data, err := readConfig(ctx, iamOS.objAPI, path)
+	data, err := iamOS.Globals.readConfig(ctx, iamOS.objAPI, path)
 	if err != nil {
 		return err
 	}
-	if globalConfigEncrypted && !utf8.Valid(data) {
-		data, err = madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(data))
+	if iamOS.Globals.ConfigEncrypted && !utf8.Valid(data) {
+		data, err = madmin.DecryptData(iamOS.Globals.ActiveCred.String(), bytes.NewReader(data))
 		if err != nil {
 			return err
 		}
@@ -233,7 +233,7 @@ func (iamOS *IAMObjectStore) loadIAMConfig(ctx context.Context, item interface{}
 }
 
 func (iamOS *IAMObjectStore) deleteIAMConfig(ctx context.Context, path string) error {
-	return deleteConfig(ctx, iamOS.objAPI, path)
+	return iamOS.Globals.deleteConfig(ctx, iamOS.objAPI, path)
 }
 
 func (iamOS *IAMObjectStore) loadPolicyDoc(ctx context.Context, policy string, m map[string]iampolicy.Policy) error {
@@ -281,15 +281,15 @@ func (iamOS *IAMObjectStore) loadUser(ctx context.Context, user string, userType
 	}
 
 	// If this is a service account, rotate the session key if needed
-	if globalOldCred.IsValid() && u.Credentials.IsServiceAccount() {
-		if !globalOldCred.Equal(globalActiveCred) {
+	if iamOS.Globals.OldCred.IsValid() && u.Credentials.IsServiceAccount() {
+		if !iamOS.Globals.OldCred.Equal(iamOS.Globals.ActiveCred) {
 			m := jwtgo.MapClaims{}
 			stsTokenCallback := func(t *jwtgo.Token) (interface{}, error) {
-				return []byte(globalOldCred.SecretKey), nil
+				return []byte(iamOS.Globals.OldCred.SecretKey), nil
 			}
 			if _, err := jwtgo.ParseWithClaims(u.Credentials.SessionToken, m, stsTokenCallback); err == nil {
 				jwt := jwtgo.NewWithClaims(jwtgo.SigningMethodHS512, jwtgo.MapClaims(m))
-				if token, err := jwt.SignedString([]byte(globalActiveCred.SecretKey)); err == nil {
+				if token, err := jwt.SignedString([]byte(iamOS.Globals.ActiveCred.SecretKey)); err == nil {
 					u.Credentials.SessionToken = token
 					err := iamOS.saveIAMConfig(ctx, &u, getUserIdentityPath(user, userType))
 					if err != nil {

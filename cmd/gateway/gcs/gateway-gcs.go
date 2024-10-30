@@ -37,6 +37,10 @@ import (
 	"cloud.google.com/go/storage"
 	humanize "github.com/dustin/go-humanize"
 	"github.com/minio/cli"
+	"google.golang.org/api/googleapi"
+	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
+
 	miniogopolicy "github.com/minio/minio-go/v7/pkg/policy"
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
@@ -45,9 +49,6 @@ import (
 	"github.com/minio/minio/pkg/bucket/policy/condition"
 	"github.com/minio/minio/pkg/env"
 	"github.com/minio/minio/pkg/madmin"
-	"google.golang.org/api/googleapi"
-	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 )
 
 var (
@@ -164,7 +165,7 @@ func (g *GCS) Name() string {
 }
 
 // NewGatewayLayer returns gcs ObjectLayer.
-func (g *GCS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
+func (g *GCS) NewGatewayLayer(globals *minio.Globals, creds auth.Credentials) (minio.ObjectLayer, error) {
 	ctx := minio.GlobalContext
 
 	var err error
@@ -180,7 +181,7 @@ func (g *GCS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error)
 	metrics := minio.NewMetrics()
 
 	t := &minio.MetricsTransport{
-		Transport: minio.NewGatewayHTTPTransport(),
+		Transport: minio.NewGatewayHTTPTransport(globals),
 		Metrics:   metrics,
 	}
 

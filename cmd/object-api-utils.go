@@ -35,6 +35,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/klauspost/compress/s2"
 	"github.com/klauspost/readahead"
+
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	"github.com/minio/minio/cmd/config/compress"
 	"github.com/minio/minio/cmd/config/storageclass"
@@ -443,20 +444,20 @@ func (o ObjectInfo) GetActualSize() (int64, error) {
 // Disabling compression for encrypted enabled requests.
 // Using compression and encryption together enables room for side channel attacks.
 // Eliminate non-compressible objects by extensions/content-types.
-func isCompressible(header http.Header, object string) bool {
-	globalCompressConfigMu.Lock()
-	cfg := globalCompressConfig
-	globalCompressConfigMu.Unlock()
+func (api objectAPIHandlers) isCompressible(header http.Header, object string) bool {
+	api.CompressConfigMu.Lock()
+	cfg := api.CompressConfig
+	api.CompressConfigMu.Unlock()
 
 	_, ok := crypto.IsRequested(header)
-	if !cfg.Enabled || (ok && !cfg.AllowEncrypted) || excludeForCompression(header, object, cfg) {
+	if !cfg.Enabled || (ok && !cfg.AllowEncrypted) || api.excludeForCompression(header, object, cfg) {
 		return false
 	}
 	return true
 }
 
 // Eliminate the non-compressible objects.
-func excludeForCompression(header http.Header, object string, cfg compress.Config) bool {
+func (api objectAPIHandlers) excludeForCompression(header http.Header, object string, cfg compress.Config) bool {
 	objStr := object
 	contentType := header.Get(xhttp.ContentType)
 	if !cfg.Enabled {
@@ -464,7 +465,7 @@ func excludeForCompression(header http.Header, object string, cfg compress.Confi
 	}
 
 	// We strictly disable compression for standard extensions/content-types (`compressed`).
-	if hasStringSuffixInSlice(objStr, standardExcludeCompressExtensions) || hasPattern(standardExcludeCompressContentTypes, contentType) {
+	if hasStringSuffixInSlice(objStr, api.standardExcludeCompressExtensions) || hasPattern(api.standardExcludeCompressContentTypes, contentType) {
 		return true
 	}
 

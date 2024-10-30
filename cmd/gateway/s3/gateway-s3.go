@@ -152,19 +152,21 @@ var defaultProviders = []credentials.Provider{
 //     call to a pre-defined endpoint, only valid inside
 //     configured ec2 instances)
 //   - Static credentials provided by user (i.e. MINIO_ROOT_USER/MINIO_ACCESS_KEY)
-var defaultAWSCredProviders = []credentials.Provider{
-	&credentials.EnvAWS{},
-	&credentials.FileAWSCredentials{},
-	&credentials.IAM{
-		Client: &http.Client{
-			Transport: minio.NewGatewayHTTPTransport(),
+func defaultAWSCredProviders(g *minio.Globals) []credentials.Provider {
+	return []credentials.Provider{
+		&credentials.EnvAWS{},
+		&credentials.FileAWSCredentials{},
+		&credentials.IAM{
+			Client: &http.Client{
+				Transport: minio.NewGatewayHTTPTransport(g),
+			},
 		},
-	},
-	&credentials.EnvMinio{},
+		&credentials.EnvMinio{},
+	}
 }
 
 // newS3 - Initializes a new client by auto probing S3 server signature.
-func newS3(urlStr string, tripper http.RoundTripper) (*miniogo.Core, error) {
+func newS3(urlStr string, tripper http.RoundTripper, g *minio.Globals) (*miniogo.Core, error) {
 	if urlStr == "" {
 		urlStr = "https://s3.amazonaws.com"
 	}
@@ -184,7 +186,7 @@ func newS3(urlStr string, tripper http.RoundTripper) (*miniogo.Core, error) {
 	if s3utils.IsAmazonEndpoint(*u) {
 		// If we see an Amazon S3 endpoint, then we use more ways to fetch backend credentials.
 		// Specifically IAM style rotating credentials are only supported with AWS S3 endpoint.
-		creds = credentials.NewChainCredentials(defaultAWSCredProviders)
+		creds = credentials.NewChainCredentials(defaultAWSCredProviders(g))
 
 	} else {
 		creds = credentials.NewChainCredentials(defaultProviders)
@@ -207,17 +209,17 @@ func newS3(urlStr string, tripper http.RoundTripper) (*miniogo.Core, error) {
 }
 
 // NewGatewayLayer returns s3 ObjectLayer.
-func (g *S3) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
+func (g *S3) NewGatewayLayer(globals *minio.Globals, creds auth.Credentials) (minio.ObjectLayer, error) {
 	metrics := minio.NewMetrics()
 
 	t := &minio.MetricsTransport{
-		Transport: minio.NewGatewayHTTPTransport(),
+		Transport: minio.NewGatewayHTTPTransport(globals),
 		Metrics:   metrics,
 	}
 
 	// creds are ignored here, since S3 gateway implements chaining
 	// all credentials.
-	clnt, err := newS3(g.host, t)
+	clnt, err := newS3(g.host, t, globals)
 	if err != nil {
 		return nil, err
 	}

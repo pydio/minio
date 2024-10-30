@@ -18,7 +18,6 @@ package cmd
 
 import (
 	"errors"
-	"fmt"
 	"net"
 	"net/url"
 	"sort"
@@ -108,8 +107,10 @@ func getHostIP(host string) (ipList set.StringSet, err error) {
 // of ip address by their last octet value in descending order.
 type byLastOctetValue []net.IP
 
-func (n byLastOctetValue) Len() int      { return len(n) }
+func (n byLastOctetValue) Len() int { return len(n) }
+
 func (n byLastOctetValue) Swap(i, j int) { n[i], n[j] = n[j], n[i] }
+
 func (n byLastOctetValue) Less(i, j int) bool {
 	// This case is needed when all ips in the list
 	// have same last octets, Following just ensures that
@@ -153,23 +154,6 @@ func sortIPs(ipList []string) []string {
 	}
 
 	return append(nonIPs, ips...)
-}
-
-func getAPIEndpoints() (apiEndpoints []string) {
-	var ipList []string
-	if globalMinioHost == "" {
-		ipList = sortIPs(mustGetLocalIP4().ToSlice())
-		ipList = append(ipList, mustGetLocalIP6().ToSlice()...)
-	} else {
-		ipList = []string{globalMinioHost}
-	}
-
-	for _, ip := range ipList {
-		endpoint := fmt.Sprintf("%s://%s", getURLScheme(globalIsTLS), net.JoinHostPort(ip, globalMinioPort))
-		apiEndpoints = append(apiEndpoints, endpoint)
-	}
-
-	return apiEndpoints
 }
 
 // isHostIP - helper for validating if the provided arg is an ip address.
@@ -288,7 +272,8 @@ func isLocalHost(host string, port string, localPort string) (bool, error) {
 
 // sameLocalAddrs - returns true if two addresses, even with different
 // formats, point to the same machine, e.g:
-//  ':9000' and 'http://localhost:9000/' will return true
+//
+//	':9000' and 'http://localhost:9000/' will return true
 func sameLocalAddrs(addr1, addr2 string) (bool, error) {
 
 	// Extract host & port from given parameters

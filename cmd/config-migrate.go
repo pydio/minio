@@ -48,31 +48,31 @@ import (
 var configMigrateMSGTemplate = "Configuration file %s migrated from version '%s' to '%s' successfully."
 
 // Save config file to corresponding backend
-func Save(configFile string, data interface{}) error {
+func (gl *Globals) Save(configFile string, data interface{}) error {
 	return quick.SaveConfig(data, configFile)
 }
 
 // Load config from backend
-func Load(configFile string, data interface{}) (quick.Config, error) {
+func (gl *Globals) Load(configFile string, data interface{}) (quick.Config, error) {
 	return quick.LoadConfig(configFile, data)
 }
 
 // GetVersion gets config version from backend
-func GetVersion(configFile string) (string, error) {
+func (gl *Globals) GetVersion(configFile string) (string, error) {
 	return quick.GetVersion(configFile)
 }
 
 // Migrates all config versions from "1" to "28".
-func migrateConfig() error {
+func (gl *Globals) migrateConfig() error {
 	// Purge all configs with version '1',
 	// this is a special case since version '1' used
 	// to be a filename 'fsUsers.json' not 'config.json'.
-	if err := purgeV1(); err != nil {
+	if err := gl.purgeV1(); err != nil {
 		return err
 	}
 
 	// Load only config version information.
-	version, err := GetVersion(getConfigFile())
+	version, err := gl.GetVersion(gl.getConfigFile())
 	if err != nil {
 		if osIsNotExist(err) || osIsPermission(err) {
 			return nil
@@ -85,148 +85,148 @@ func migrateConfig() error {
 	switch version {
 	case "2":
 		// Migrate version '2' to '3'.
-		if err = migrateV2ToV3(); err != nil {
+		if err = gl.migrateV2ToV3(); err != nil {
 			return err
 		}
 		fallthrough
 	case "3":
 		// Migrate version '3' to '4'.
-		if err = migrateV3ToV4(); err != nil {
+		if err = gl.migrateV3ToV4(); err != nil {
 			return err
 		}
 		fallthrough
 	case "4":
 		// Migrate version '4' to '5'.
-		if err = migrateV4ToV5(); err != nil {
+		if err = gl.migrateV4ToV5(); err != nil {
 			return err
 		}
 		fallthrough
 	case "5":
 		// Migrate version '5' to '6.
-		if err = migrateV5ToV6(); err != nil {
+		if err = gl.migrateV5ToV6(); err != nil {
 			return err
 		}
 		fallthrough
 	case "6":
 		// Migrate version '6' to '7'.
-		if err = migrateV6ToV7(); err != nil {
+		if err = gl.migrateV6ToV7(); err != nil {
 			return err
 		}
 		fallthrough
 	case "7":
 		// Migrate version '7' to '8'.
-		if err = migrateV7ToV8(); err != nil {
+		if err = gl.migrateV7ToV8(); err != nil {
 			return err
 		}
 		fallthrough
 	case "8":
 		// Migrate version '8' to '9'.
-		if err = migrateV8ToV9(); err != nil {
+		if err = gl.migrateV8ToV9(); err != nil {
 			return err
 		}
 		fallthrough
 	case "9":
 		// Migrate version '9' to '10'.
-		if err = migrateV9ToV10(); err != nil {
+		if err = gl.migrateV9ToV10(); err != nil {
 			return err
 		}
 		fallthrough
 	case "10":
 		// Migrate version '10' to '11'.
-		if err = migrateV10ToV11(); err != nil {
+		if err = gl.migrateV10ToV11(); err != nil {
 			return err
 		}
 		fallthrough
 	case "11":
 		// Migrate version '11' to '12'.
-		if err = migrateV11ToV12(); err != nil {
+		if err = gl.migrateV11ToV12(); err != nil {
 			return err
 		}
 		fallthrough
 	case "12":
 		// Migrate version '12' to '13'.
-		if err = migrateV12ToV13(); err != nil {
+		if err = gl.migrateV12ToV13(); err != nil {
 			return err
 		}
 		fallthrough
 	case "13":
 		// Migrate version '13' to '14'.
-		if err = migrateV13ToV14(); err != nil {
+		if err = gl.migrateV13ToV14(); err != nil {
 			return err
 		}
 		fallthrough
 	case "14":
 		// Migrate version '14' to '15'.
-		if err = migrateV14ToV15(); err != nil {
+		if err = gl.migrateV14ToV15(); err != nil {
 			return err
 		}
 		fallthrough
 	case "15":
 		// Migrate version '15' to '16'.
-		if err = migrateV15ToV16(); err != nil {
+		if err = gl.migrateV15ToV16(); err != nil {
 			return err
 		}
 		fallthrough
 	case "16":
 		// Migrate version '16' to '17'.
-		if err = migrateV16ToV17(); err != nil {
+		if err = gl.migrateV16ToV17(); err != nil {
 			return err
 		}
 		fallthrough
 	case "17":
 		// Migrate version '17' to '18'.
-		if err = migrateV17ToV18(); err != nil {
+		if err = gl.migrateV17ToV18(); err != nil {
 			return err
 		}
 		fallthrough
 	case "18":
 		// Migrate version '18' to '19'.
-		if err = migrateV18ToV19(); err != nil {
+		if err = gl.migrateV18ToV19(); err != nil {
 			return err
 		}
 		fallthrough
 	case "19":
-		if err = migrateV19ToV20(); err != nil {
+		if err = gl.migrateV19ToV20(); err != nil {
 			return err
 		}
 		fallthrough
 	case "20":
-		if err = migrateV20ToV21(); err != nil {
+		if err = gl.migrateV20ToV21(); err != nil {
 			return err
 		}
 		fallthrough
 	case "21":
-		if err = migrateV21ToV22(); err != nil {
+		if err = gl.migrateV21ToV22(); err != nil {
 			return err
 		}
 		fallthrough
 	case "22":
-		if err = migrateV22ToV23(); err != nil {
+		if err = gl.migrateV22ToV23(); err != nil {
 			return err
 		}
 		fallthrough
 	case "23":
-		if err = migrateV23ToV24(); err != nil {
+		if err = gl.migrateV23ToV24(); err != nil {
 			return err
 		}
 		fallthrough
 	case "24":
-		if err = migrateV24ToV25(); err != nil {
+		if err = gl.migrateV24ToV25(); err != nil {
 			return err
 		}
 		fallthrough
 	case "25":
-		if err = migrateV25ToV26(); err != nil {
+		if err = gl.migrateV25ToV26(); err != nil {
 			return err
 		}
 		fallthrough
 	case "26":
-		if err = migrateV26ToV27(); err != nil {
+		if err = gl.migrateV26ToV27(); err != nil {
 			return err
 		}
 		fallthrough
 	case "27":
-		if err = migrateV27ToV28(); err != nil {
+		if err = gl.migrateV27ToV28(); err != nil {
 			return err
 		}
 		fallthrough
@@ -238,11 +238,11 @@ func migrateConfig() error {
 }
 
 // Version '1' is not supported anymore and deprecated, safe to delete.
-func purgeV1() error {
-	configFile := filepath.Join(globalConfigDir.Get(), "fsUsers.json")
+func (gl *Globals) purgeV1() error {
+	configFile := filepath.Join(gl.CliContext.ConfigDir.Get(), "fsUsers.json")
 
 	cv1 := &configV1{}
-	_, err := Load(configFile, cv1)
+	_, err := gl.Load(configFile, cv1)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -259,11 +259,11 @@ func purgeV1() error {
 
 // Version '2' to '3' config migration adds new fields and re-orders
 // previous fields. Simplifies config for future additions.
-func migrateV2ToV3() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV2ToV3() error {
+	configFile := gl.getConfigFile()
 
 	cv2 := &configV2{}
-	_, err := Load(configFile, cv2)
+	_, err := gl.Load(configFile, cv2)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -307,7 +307,7 @@ func migrateV2ToV3() error {
 	}
 	srvConfig.Logger.Syslog = slogger
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv2.Version, srvConfig.Version, err)
 	}
 
@@ -318,11 +318,11 @@ func migrateV2ToV3() error {
 // Version '3' to '4' migrates config, removes previous fields related
 // to backend types and server address. This change further simplifies
 // the config for future additions.
-func migrateV3ToV4() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV3ToV4() error {
+	configFile := gl.getConfigFile()
 
 	cv3 := &configV3{}
-	_, err := Load(configFile, cv3)
+	_, err := gl.Load(configFile, cv3)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -345,7 +345,7 @@ func migrateV3ToV4() error {
 	srvConfig.Logger.File = cv3.Logger.File
 	srvConfig.Logger.Syslog = cv3.Logger.Syslog
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv3.Version, srvConfig.Version, err)
 	}
 
@@ -356,11 +356,11 @@ func migrateV3ToV4() error {
 // Version '4' to '5' migrates config, removes previous fields related
 // to backend types and server address. This change further simplifies
 // the config for future additions.
-func migrateV4ToV5() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV4ToV5() error {
+	configFile := gl.getConfigFile()
 
 	cv4 := &configV4{}
-	_, err := Load(configFile, cv4)
+	_, err := gl.Load(configFile, cv4)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -386,7 +386,7 @@ func migrateV4ToV5() error {
 	srvConfig.Logger.ElasticSearch.Enable = false
 	srvConfig.Logger.Redis.Enable = false
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv4.Version, srvConfig.Version, err)
 	}
 
@@ -397,11 +397,11 @@ func migrateV4ToV5() error {
 // Version '5' to '6' migrates config, removes previous fields related
 // to backend types and server address. This change further simplifies
 // the config for future additions.
-func migrateV5ToV6() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV5ToV6() error {
+	configFile := gl.getConfigFile()
 
 	cv5 := &configV5{}
-	_, err := Load(configFile, cv5)
+	_, err := gl.Load(configFile, cv5)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -475,7 +475,7 @@ func migrateV5ToV6() error {
 		}
 	}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv5.Version, srvConfig.Version, err)
 	}
 
@@ -486,11 +486,11 @@ func migrateV5ToV6() error {
 // Version '6' to '7' migrates config, removes previous fields related
 // to backend types and server address. This change further simplifies
 // the config for future additions.
-func migrateV6ToV7() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV6ToV7() error {
+	configFile := gl.getConfigFile()
 
 	cv6 := &configV6{}
-	_, err := Load(configFile, cv6)
+	_, err := gl.Load(configFile, cv6)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -531,7 +531,7 @@ func migrateV6ToV7() error {
 		srvConfig.Notify.Redis = cv6.Notify.Redis
 	}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv6.Version, srvConfig.Version, err)
 	}
 
@@ -542,11 +542,11 @@ func migrateV6ToV7() error {
 // Version '7' to '8' migrates config, removes previous fields related
 // to backend types and server address. This change further simplifies
 // the config for future additions.
-func migrateV7ToV8() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV7ToV8() error {
+	configFile := gl.getConfigFile()
 
 	cv7 := &serverConfigV7{}
-	_, err := Load(configFile, cv7)
+	_, err := gl.Load(configFile, cv7)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -594,7 +594,7 @@ func migrateV7ToV8() error {
 		srvConfig.Notify.Redis = cv7.Notify.Redis
 	}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv7.Version, srvConfig.Version, err)
 	}
 
@@ -604,11 +604,11 @@ func migrateV7ToV8() error {
 
 // Version '8' to '9' migration. Adds postgresql notifier
 // configuration, but it's otherwise the same as V8.
-func migrateV8ToV9() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV8ToV9() error {
+	configFile := gl.getConfigFile()
 
 	cv8 := &serverConfigV8{}
-	_, err := Load(configFile, cv8)
+	_, err := gl.Load(configFile, cv8)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -664,7 +664,7 @@ func migrateV8ToV9() error {
 		srvConfig.Notify.PostgreSQL = cv8.Notify.PostgreSQL
 	}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv8.Version, srvConfig.Version, err)
 	}
 
@@ -674,11 +674,11 @@ func migrateV8ToV9() error {
 
 // Version '9' to '10' migration. Remove syslog config
 // but it's otherwise the same as V9.
-func migrateV9ToV10() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV9ToV10() error {
+	configFile := gl.getConfigFile()
 
 	cv9 := &serverConfigV9{}
-	_, err := Load(configFile, cv9)
+	_, err := gl.Load(configFile, cv9)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -732,7 +732,7 @@ func migrateV9ToV10() error {
 		srvConfig.Notify.PostgreSQL = cv9.Notify.PostgreSQL
 	}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv9.Version, srvConfig.Version, err)
 	}
 
@@ -742,11 +742,11 @@ func migrateV9ToV10() error {
 
 // Version '10' to '11' migration. Add support for Kafka
 // notifications.
-func migrateV10ToV11() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV10ToV11() error {
+	configFile := gl.getConfigFile()
 
 	cv10 := &serverConfigV10{}
-	_, err := Load(configFile, cv10)
+	_, err := gl.Load(configFile, cv10)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -803,7 +803,7 @@ func migrateV10ToV11() error {
 	srvConfig.Notify.Kafka = make(map[string]target.KafkaArgs)
 	srvConfig.Notify.Kafka["1"] = target.KafkaArgs{}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv10.Version, srvConfig.Version, err)
 	}
 
@@ -813,11 +813,11 @@ func migrateV10ToV11() error {
 
 // Version '11' to '12' migration. Add support for NATS streaming
 // notifications.
-func migrateV11ToV12() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV11ToV12() error {
+	configFile := gl.getConfigFile()
 
 	cv11 := &serverConfigV11{}
-	_, err := Load(configFile, cv11)
+	_, err := gl.Load(configFile, cv11)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -901,7 +901,7 @@ func migrateV11ToV12() error {
 		}
 	}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv11.Version, srvConfig.Version, err)
 	}
 
@@ -910,11 +910,11 @@ func migrateV11ToV12() error {
 }
 
 // Version '12' to '13' migration. Add support for custom webhook endpoint.
-func migrateV12ToV13() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV12ToV13() error {
+	configFile := gl.getConfigFile()
 
 	cv12 := &serverConfigV12{}
-	_, err := Load(configFile, cv12)
+	_, err := gl.Load(configFile, cv12)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -981,7 +981,7 @@ func migrateV12ToV13() error {
 	srvConfig.Notify.Webhook = make(map[string]target.WebhookArgs)
 	srvConfig.Notify.Webhook["1"] = target.WebhookArgs{}
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv12.Version, srvConfig.Version, err)
 	}
 
@@ -990,11 +990,11 @@ func migrateV12ToV13() error {
 }
 
 // Version '13' to '14' migration. Add support for browser param.
-func migrateV13ToV14() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV13ToV14() error {
+	configFile := gl.getConfigFile()
 
 	cv13 := &serverConfigV13{}
-	_, err := Load(configFile, cv13)
+	_, err := gl.Load(configFile, cv13)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1066,7 +1066,7 @@ func migrateV13ToV14() error {
 	// Set the new browser parameter to true by default
 	srvConfig.Browser = true
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv13.Version, srvConfig.Version, err)
 	}
 
@@ -1075,11 +1075,11 @@ func migrateV13ToV14() error {
 }
 
 // Version '14' to '15' migration. Add support for MySQL notifications.
-func migrateV14ToV15() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV14ToV15() error {
+	configFile := gl.getConfigFile()
 
 	cv14 := &serverConfigV14{}
-	_, err := Load(configFile, cv14)
+	_, err := gl.Load(configFile, cv14)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1155,7 +1155,7 @@ func migrateV14ToV15() error {
 	// Load browser config from existing config in the file.
 	srvConfig.Browser = cv14.Browser
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv14.Version, srvConfig.Version, err)
 	}
 
@@ -1165,11 +1165,11 @@ func migrateV14ToV15() error {
 
 // Version '15' to '16' migration. Remove log level in loggers
 // and rename 'fileName' filed in File logger to 'filename'
-func migrateV15ToV16() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV15ToV16() error {
+	configFile := gl.getConfigFile()
 
 	cv15 := &serverConfigV15{}
-	_, err := Load(configFile, cv15)
+	_, err := gl.Load(configFile, cv15)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1245,7 +1245,7 @@ func migrateV15ToV16() error {
 	// Load browser config from existing config in the file.
 	srvConfig.Browser = cv15.Browser
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv15.Version, srvConfig.Version, err)
 	}
 
@@ -1255,11 +1255,11 @@ func migrateV15ToV16() error {
 
 // Version '16' to '17' migration. Adds "format" configuration
 // parameter for database targets.
-func migrateV16ToV17() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV16ToV17() error {
+	configFile := gl.getConfigFile()
 
 	cv16 := &serverConfigV16{}
-	_, err := Load(configFile, cv16)
+	_, err := gl.Load(configFile, cv16)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1366,7 +1366,7 @@ func migrateV16ToV17() error {
 	// Load browser config from existing config in the file.
 	srvConfig.Browser = cv16.Browser
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv16.Version, srvConfig.Version, err)
 	}
 
@@ -1376,11 +1376,11 @@ func migrateV16ToV17() error {
 
 // Version '17' to '18' migration. Adds "deliveryMode" configuration
 // parameter for AMQP notification target
-func migrateV17ToV18() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV17ToV18() error {
+	configFile := gl.getConfigFile()
 
 	cv17 := &serverConfigV17{}
-	_, err := Load(configFile, cv17)
+	_, err := gl.Load(configFile, cv17)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1470,7 +1470,7 @@ func migrateV17ToV18() error {
 	// Load browser config from existing config in the file.
 	srvConfig.Browser = cv17.Browser
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv17.Version, srvConfig.Version, err)
 	}
 
@@ -1478,11 +1478,11 @@ func migrateV17ToV18() error {
 	return nil
 }
 
-func migrateV18ToV19() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV18ToV19() error {
+	configFile := gl.getConfigFile()
 
 	cv18 := &serverConfigV18{}
-	_, err := Load(configFile, cv18)
+	_, err := gl.Load(configFile, cv18)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1576,7 +1576,7 @@ func migrateV18ToV19() error {
 	// Load browser config from existing config in the file.
 	srvConfig.Browser = cv18.Browser
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv18.Version, srvConfig.Version, err)
 	}
 
@@ -1584,11 +1584,11 @@ func migrateV18ToV19() error {
 	return nil
 }
 
-func migrateV19ToV20() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV19ToV20() error {
+	configFile := gl.getConfigFile()
 
 	cv19 := &serverConfigV19{}
-	_, err := Load(configFile, cv19)
+	_, err := gl.Load(configFile, cv19)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1681,7 +1681,7 @@ func migrateV19ToV20() error {
 	// Load browser config from existing config in the file.
 	srvConfig.Browser = cv19.Browser
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv19.Version, srvConfig.Version, err)
 	}
 
@@ -1689,11 +1689,11 @@ func migrateV19ToV20() error {
 	return nil
 }
 
-func migrateV20ToV21() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV20ToV21() error {
+	configFile := gl.getConfigFile()
 
 	cv20 := &serverConfigV20{}
-	_, err := Load(configFile, cv20)
+	_, err := gl.Load(configFile, cv20)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1785,7 +1785,7 @@ func migrateV20ToV21() error {
 	// Load domain config from existing config in the file.
 	srvConfig.Domain = cv20.Domain
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv20.Version, srvConfig.Version, err)
 	}
 
@@ -1793,11 +1793,11 @@ func migrateV20ToV21() error {
 	return nil
 }
 
-func migrateV21ToV22() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV21ToV22() error {
+	configFile := gl.getConfigFile()
 
 	cv21 := &serverConfigV21{}
-	_, err := Load(configFile, cv21)
+	_, err := gl.Load(configFile, cv21)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -1889,7 +1889,7 @@ func migrateV21ToV22() error {
 	// Load domain config from existing config in the file.
 	srvConfig.Domain = cv21.Domain
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv21.Version, srvConfig.Version, err)
 	}
 
@@ -1897,11 +1897,11 @@ func migrateV21ToV22() error {
 	return nil
 }
 
-func migrateV22ToV23() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV22ToV23() error {
+	configFile := gl.getConfigFile()
 
 	cv22 := &serverConfigV22{}
-	_, err := Load(configFile, cv22)
+	_, err := gl.Load(configFile, cv22)
 	if osIsNotExist(err) || osIsPermission(err) {
 		return nil
 	} else if err != nil {
@@ -2002,7 +2002,7 @@ func migrateV22ToV23() error {
 	srvConfig.Cache.Exclude = []string{}
 	srvConfig.Cache.Expiry = 90
 
-	if err = Save(configFile, srvConfig); err != nil {
+	if err = gl.Save(configFile, srvConfig); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘%s’ to ‘%s’. %w", cv22.Version, srvConfig.Version, err)
 	}
 
@@ -2010,8 +2010,8 @@ func migrateV22ToV23() error {
 	return nil
 }
 
-func migrateV23ToV24() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV23ToV24() error {
+	configFile := gl.getConfigFile()
 
 	cv23 := &serverConfigV23{}
 	_, err := quick.LoadConfig(configFile, cv23)
@@ -2123,8 +2123,8 @@ func migrateV23ToV24() error {
 	return nil
 }
 
-func migrateV24ToV25() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV24ToV25() error {
+	configFile := gl.getConfigFile()
 
 	cv24 := &serverConfigV24{}
 	_, err := quick.LoadConfig(configFile, cv24)
@@ -2241,8 +2241,8 @@ func migrateV24ToV25() error {
 	return nil
 }
 
-func migrateV25ToV26() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV25ToV26() error {
+	configFile := gl.getConfigFile()
 
 	cv25 := &serverConfigV25{}
 	_, err := quick.LoadConfig(configFile, cv25)
@@ -2360,8 +2360,8 @@ func migrateV25ToV26() error {
 	return nil
 }
 
-func migrateV26ToV27() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV26ToV27() error {
+	configFile := gl.getConfigFile()
 
 	// config V27 is backward compatible with V26, load the old
 	// config file in serverConfigV27 struct and put some examples
@@ -2393,8 +2393,8 @@ func migrateV26ToV27() error {
 	return nil
 }
 
-func migrateV27ToV28() error {
-	configFile := getConfigFile()
+func (gl *Globals) migrateV27ToV28() error {
+	configFile := gl.getConfigFile()
 
 	// config V28 is backward compatible with V27, load the old
 	// config file in serverConfigV28 struct and initialize KMSConfig
@@ -2423,29 +2423,29 @@ func migrateV27ToV28() error {
 
 // Migrates ${HOME}/.minio/config.json to '<export_path>/.minio.sys/config/config.json'
 // if etcd is configured then migrates /config/config.json to '<export_path>/.minio.sys/config/config.json'
-func migrateConfigToMinioSys(objAPI ObjectLayer) (err error) {
+func (gl *Globals) migrateConfigToMinioSys(objAPI ObjectLayer) (err error) {
 	// Construct path to config.json for the given bucket.
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
 	defer func() {
 		if err == nil {
-			os.Rename(getConfigFile(), getConfigFile()+".deprecated")
+			os.Rename(gl.getConfigFile(), gl.getConfigFile()+".deprecated")
 		}
 	}()
 
 	// Verify if backend already has the file (after holding lock)
-	if err = checkConfig(GlobalContext, objAPI, configFile); err != errConfigNotFound {
+	if err = gl.checkConfig(GlobalContext, objAPI, configFile); err != errConfigNotFound {
 		return err
 	} // if errConfigNotFound proceed to migrate..
 
 	var configFiles = []string{
-		getConfigFile(),
-		getConfigFile() + ".deprecated",
+		gl.getConfigFile(),
+		gl.getConfigFile() + ".deprecated",
 		configFile,
 	}
 	var config = &serverConfigV27{}
 	for _, cfgFile := range configFiles {
-		if _, err = Load(cfgFile, config); err != nil {
+		if _, err = gl.Load(cfgFile, config); err != nil {
 			if !osIsNotExist(err) && !osIsPermission(err) {
 				return err
 			}
@@ -2458,18 +2458,18 @@ func migrateConfigToMinioSys(objAPI ObjectLayer) (err error) {
 	}
 	if osIsNotExist(err) || osIsPermission(err) {
 		// Initialize the server config, if no config exists.
-		return newSrvConfig(objAPI)
+		return gl.newSrvConfig(objAPI)
 	}
-	return saveServerConfig(GlobalContext, objAPI, config)
+	return gl.saveServerConfig(GlobalContext, objAPI, config)
 }
 
 // Migrates '.minio.sys/config.json' to v33.
-func migrateMinioSysConfig(objAPI ObjectLayer) error {
+func (gl *Globals) migrateMinioSysConfig(objAPI ObjectLayer) error {
 	// Construct path to config.json for the given bucket.
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
 	// Check if the config version is latest, if not migrate.
-	ok, _, err := checkConfigVersion(objAPI, configFile, "33")
+	ok, _, err := gl.checkConfigVersion(objAPI, configFile, "33")
 	if err != nil {
 		return err
 	}
@@ -2477,32 +2477,32 @@ func migrateMinioSysConfig(objAPI ObjectLayer) error {
 		return nil
 	}
 
-	if err := migrateV27ToV28MinioSys(objAPI); err != nil {
+	if err := gl.migrateV27ToV28MinioSys(objAPI); err != nil {
 		return err
 	}
-	if err := migrateV28ToV29MinioSys(objAPI); err != nil {
+	if err := gl.migrateV28ToV29MinioSys(objAPI); err != nil {
 		return err
 	}
-	if err := migrateV29ToV30MinioSys(objAPI); err != nil {
+	if err := gl.migrateV29ToV30MinioSys(objAPI); err != nil {
 		return err
 	}
-	if err := migrateV30ToV31MinioSys(objAPI); err != nil {
+	if err := gl.migrateV30ToV31MinioSys(objAPI); err != nil {
 		return err
 	}
-	if err := migrateV31ToV32MinioSys(objAPI); err != nil {
+	if err := gl.migrateV31ToV32MinioSys(objAPI); err != nil {
 		return err
 	}
-	return migrateV32ToV33MinioSys(objAPI)
+	return gl.migrateV32ToV33MinioSys(objAPI)
 }
 
-func checkConfigVersion(objAPI ObjectLayer, configFile string, version string) (bool, []byte, error) {
-	data, err := readConfig(GlobalContext, objAPI, configFile)
+func (gl *Globals) checkConfigVersion(objAPI ObjectLayer, configFile string, version string) (bool, []byte, error) {
+	data, err := gl.readConfig(GlobalContext, objAPI, configFile)
 	if err != nil {
 		return false, nil, err
 	}
 
-	if globalConfigEncrypted && !utf8.Valid(data) {
-		data, err = madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(data))
+	if gl.ConfigEncrypted && !utf8.Valid(data) {
+		data, err = madmin.DecryptData(gl.ActiveCred.String(), bytes.NewReader(data))
 		if err != nil {
 			if err == madmin.ErrMaliciousData {
 				return false, nil, config.ErrInvalidCredentialsBackendEncrypted(nil)
@@ -2522,9 +2522,9 @@ func checkConfigVersion(objAPI ObjectLayer, configFile string, version string) (
 	return vcfg.Version == version, data, nil
 }
 
-func migrateV27ToV28MinioSys(objAPI ObjectLayer) error {
+func (gl *Globals) migrateV27ToV28MinioSys(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
-	ok, data, err := checkConfigVersion(objAPI, configFile, "27")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "27")
 	if err == errConfigNotFound {
 		return nil
 	} else if err != nil {
@@ -2542,7 +2542,7 @@ func migrateV27ToV28MinioSys(objAPI ObjectLayer) error {
 	cfg.Version = "28"
 	cfg.KMS = crypto.KMSConfig{}
 
-	if err = saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘27’ to ‘28’. %w", err)
 	}
 
@@ -2550,10 +2550,10 @@ func migrateV27ToV28MinioSys(objAPI ObjectLayer) error {
 	return nil
 }
 
-func migrateV28ToV29MinioSys(objAPI ObjectLayer) error {
+func (gl *Globals) migrateV28ToV29MinioSys(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
-	ok, data, err := checkConfigVersion(objAPI, configFile, "28")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "28")
 	if err == errConfigNotFound {
 		return nil
 	} else if err != nil {
@@ -2569,7 +2569,7 @@ func migrateV28ToV29MinioSys(objAPI ObjectLayer) error {
 	}
 
 	cfg.Version = "29"
-	if err = saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘28’ to ‘29’. %w", err)
 	}
 
@@ -2577,10 +2577,10 @@ func migrateV28ToV29MinioSys(objAPI ObjectLayer) error {
 	return nil
 }
 
-func migrateV29ToV30MinioSys(objAPI ObjectLayer) error {
+func (gl *Globals) migrateV29ToV30MinioSys(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
-	ok, data, err := checkConfigVersion(objAPI, configFile, "29")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "29")
 	if err == errConfigNotFound {
 		return nil
 	} else if err != nil {
@@ -2601,7 +2601,7 @@ func migrateV29ToV30MinioSys(objAPI ObjectLayer) error {
 	cfg.Compression.Extensions = strings.Split(compress.DefaultExtensions, config.ValueSeparator)
 	cfg.Compression.MimeTypes = strings.Split(compress.DefaultMimeTypes, config.ValueSeparator)
 
-	if err = saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘29’ to ‘30’. %w", err)
 	}
 
@@ -2609,10 +2609,10 @@ func migrateV29ToV30MinioSys(objAPI ObjectLayer) error {
 	return nil
 }
 
-func migrateV30ToV31MinioSys(objAPI ObjectLayer) error {
+func (gl *Globals) migrateV30ToV31MinioSys(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
-	ok, data, err := checkConfigVersion(objAPI, configFile, "30")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "30")
 	if err == errConfigNotFound {
 		return nil
 	} else if err != nil {
@@ -2636,7 +2636,7 @@ func migrateV30ToV31MinioSys(objAPI ObjectLayer) error {
 		AuthToken: "",
 	}
 
-	if err = saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘30’ to ‘31’. %w", err)
 	}
 
@@ -2644,10 +2644,10 @@ func migrateV30ToV31MinioSys(objAPI ObjectLayer) error {
 	return nil
 }
 
-func migrateV31ToV32MinioSys(objAPI ObjectLayer) error {
+func (gl *Globals) migrateV31ToV32MinioSys(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
-	ok, data, err := checkConfigVersion(objAPI, configFile, "31")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "31")
 	if err == errConfigNotFound {
 		return nil
 	} else if err != nil {
@@ -2666,7 +2666,7 @@ func migrateV31ToV32MinioSys(objAPI ObjectLayer) error {
 	cfg.Notify.NSQ = make(map[string]target.NSQArgs)
 	cfg.Notify.NSQ["1"] = target.NSQArgs{}
 
-	if err = saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
 		return fmt.Errorf("Failed to migrate config from ‘31’ to ‘32’. %w", err)
 	}
 
@@ -2674,10 +2674,10 @@ func migrateV31ToV32MinioSys(objAPI ObjectLayer) error {
 	return nil
 }
 
-func migrateV32ToV33MinioSys(objAPI ObjectLayer) error {
+func (gl *Globals) migrateV32ToV33MinioSys(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
-	ok, data, err := checkConfigVersion(objAPI, configFile, "32")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "32")
 	if err == errConfigNotFound {
 		return nil
 	} else if err != nil {
@@ -2694,7 +2694,7 @@ func migrateV32ToV33MinioSys(objAPI ObjectLayer) error {
 
 	cfg.Version = "33"
 
-	if err = saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, cfg); err != nil {
 		return fmt.Errorf("Failed to migrate config from '32' to '33' . %w", err)
 	}
 
@@ -2702,11 +2702,11 @@ func migrateV32ToV33MinioSys(objAPI ObjectLayer) error {
 	return nil
 }
 
-func migrateMinioSysConfigToKV(objAPI ObjectLayer) error {
+func (gl *Globals) migrateMinioSysConfigToKV(objAPI ObjectLayer) error {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 
 	// Check if the config version is latest, if not migrate.
-	ok, data, err := checkConfigVersion(objAPI, configFile, "33")
+	ok, data, err := gl.checkConfigVersion(objAPI, configFile, "33")
 	if err != nil {
 		return err
 	}
@@ -2719,7 +2719,7 @@ func migrateMinioSysConfigToKV(objAPI ObjectLayer) error {
 		return err
 	}
 
-	newCfg := newServerConfig()
+	newCfg := gl.newServerConfig()
 
 	config.SetCredentials(newCfg, cfg.Credential)
 	config.SetRegion(newCfg, cfg.Region)
@@ -2771,7 +2771,7 @@ func migrateMinioSysConfigToKV(objAPI ObjectLayer) error {
 		notify.SetNotifyWebhook(newCfg, k, args)
 	}
 
-	if err = saveServerConfig(GlobalContext, objAPI, newCfg); err != nil {
+	if err = gl.saveServerConfig(GlobalContext, objAPI, newCfg); err != nil {
 		return err
 	}
 

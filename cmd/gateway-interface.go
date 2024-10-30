@@ -36,7 +36,7 @@ type Gateway interface {
 	Name() string
 
 	// NewGatewayLayer returns a new  ObjectLayer.
-	NewGatewayLayer(creds auth.Credentials) (ObjectLayer, error)
+	NewGatewayLayer(globals *Globals, creds auth.Credentials) (ObjectLayer, error)
 
 	// Returns true if gateway is ready for production.
 	Production() bool

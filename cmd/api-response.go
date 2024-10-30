@@ -29,7 +29,6 @@ import (
 	"time"
 
 	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/handlers"
 )
 
@@ -395,7 +394,8 @@ func getObjectLocation(r *http.Request, domains []string, bucket, object string)
 	}
 	proto := handlers.GetSourceScheme(r)
 	if proto == "" {
-		proto = getURLScheme(globalIsTLS)
+		globals := mustGlobalsFromContext(r.Context())
+		proto = getURLScheme(globals.IsTLS)
 	}
 	u := &url.URL{
 		Host:   r.Host,
@@ -722,8 +722,8 @@ func generateMultiDeleteResponse(quiet bool, deletedObjects []DeletedObject, err
 	return deleteResp
 }
 
-func writeResponse(w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
-	setCommonHeaders(w)
+func writeResponse(ctx context.Context, w http.ResponseWriter, statusCode int, response []byte, mType mimeType) {
+	setCommonHeaders(ctx, w)
 	if mType != mimeNone {
 		w.Header().Set(xhttp.ContentType, string(mType))
 	}
@@ -749,85 +749,67 @@ const (
 
 // writeSuccessResponseJSON writes success headers and response if any,
 // with content-type set to `application/json`.
-func writeSuccessResponseJSON(w http.ResponseWriter, response []byte) {
-	writeResponse(w, http.StatusOK, response, mimeJSON)
+func writeSuccessResponseJSON(ctx context.Context, w http.ResponseWriter, response []byte) {
+	writeResponse(ctx, w, http.StatusOK, response, mimeJSON)
 }
 
 // writeSuccessResponseXML writes success headers and response if any,
 // with content-type set to `application/xml`.
-func writeSuccessResponseXML(w http.ResponseWriter, response []byte) {
-	writeResponse(w, http.StatusOK, response, mimeXML)
+func writeSuccessResponseXML(ctx context.Context, w http.ResponseWriter, response []byte) {
+	writeResponse(ctx, w, http.StatusOK, response, mimeXML)
 }
 
 // writeSuccessNoContent writes success headers with http status 204
-func writeSuccessNoContent(w http.ResponseWriter) {
-	writeResponse(w, http.StatusNoContent, nil, mimeNone)
+func writeSuccessNoContent(ctx context.Context, w http.ResponseWriter) {
+	writeResponse(ctx, w, http.StatusNoContent, nil, mimeNone)
 }
 
 // writeRedirectSeeOther writes Location header with http status 303
-func writeRedirectSeeOther(w http.ResponseWriter, location string) {
+func writeRedirectSeeOther(ctx context.Context, w http.ResponseWriter, location string) {
 	w.Header().Set(xhttp.Location, location)
-	writeResponse(w, http.StatusSeeOther, nil, mimeNone)
+	writeResponse(ctx, w, http.StatusSeeOther, nil, mimeNone)
 }
 
-func writeSuccessResponseHeadersOnly(w http.ResponseWriter) {
-	writeResponse(w, http.StatusOK, nil, mimeNone)
+func writeSuccessResponseHeadersOnly(ctx context.Context, w http.ResponseWriter) {
+	writeResponse(ctx, w, http.StatusOK, nil, mimeNone)
 }
 
 // writeErrorRespone writes error headers
 func writeErrorResponse(ctx context.Context, w http.ResponseWriter, err APIError, reqURL *url.URL, browser bool) {
+	globals := mustGlobalsFromContext(ctx)
 	switch err.Code {
 	case "SlowDown", "XMinioServerNotInitialized", "XMinioReadQuorum", "XMinioWriteQuorum":
 		// Set retry-after header to indicate user-agents to retry request after 120secs.
 		// https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Retry-After
 		w.Header().Set(xhttp.RetryAfter, "120")
 	case "InvalidRegion":
-		err.Description = fmt.Sprintf("Region does not match; expecting '%s'.", globalServerRegion)
+		err.Description = fmt.Sprintf("Region does not match; expecting '%s'.", globals.ServerRegion)
 	case "AuthorizationHeaderMalformed":
-		err.Description = fmt.Sprintf("The authorization header is malformed; the region is wrong; expecting '%s'.", globalServerRegion)
+		err.Description = fmt.Sprintf("The authorization header is malformed; the region is wrong; expecting '%s'.", globals.ServerRegion)
 	}
 
 	// Generate error response.
 	errorResponse := getAPIErrorResponse(ctx, err, reqURL.Path,
-		w.Header().Get(xhttp.AmzRequestID), globalDeploymentID)
+		w.Header().Get(xhttp.AmzRequestID), globals.DeploymentID)
 	encodedErrorResponse := encodeResponse(errorResponse)
-	writeResponse(w, err.HTTPStatusCode, encodedErrorResponse, mimeXML)
+	writeResponse(ctx, w, err.HTTPStatusCode, encodedErrorResponse, mimeXML)
 }
 
-func writeErrorResponseHeadersOnly(w http.ResponseWriter, err APIError) {
-	writeResponse(w, err.HTTPStatusCode, nil, mimeNone)
+func writeErrorResponseHeadersOnly(ctx context.Context, w http.ResponseWriter, err APIError) {
+	writeResponse(ctx, w, err.HTTPStatusCode, nil, mimeNone)
 }
 
 func writeErrorResponseString(ctx context.Context, w http.ResponseWriter, err APIError, reqURL *url.URL) {
 	// Generate string error response.
-	writeResponse(w, err.HTTPStatusCode, []byte(err.Description), mimeNone)
+	writeResponse(ctx, w, err.HTTPStatusCode, []byte(err.Description), mimeNone)
 }
 
 // writeErrorResponseJSON - writes error response in JSON format;
 // useful for admin APIs.
 func writeErrorResponseJSON(ctx context.Context, w http.ResponseWriter, err APIError, reqURL *url.URL) {
 	// Generate error response.
-	errorResponse := getAPIErrorResponse(ctx, err, reqURL.Path, w.Header().Get(xhttp.AmzRequestID), globalDeploymentID)
+	globals := mustGlobalsFromContext(ctx)
+	errorResponse := getAPIErrorResponse(ctx, err, reqURL.Path, w.Header().Get(xhttp.AmzRequestID), globals.DeploymentID)
 	encodedErrorResponse := encodeResponseJSON(errorResponse)
-	writeResponse(w, err.HTTPStatusCode, encodedErrorResponse, mimeJSON)
-}
-
-// writeCustomErrorResponseJSON - similar to writeErrorResponseJSON,
-// but accepts the error message directly (this allows messages to be
-// dynamically generated.)
-func writeCustomErrorResponseJSON(ctx context.Context, w http.ResponseWriter, err APIError,
-	errBody string, reqURL *url.URL) {
-
-	reqInfo := logger.GetReqInfo(ctx)
-	errorResponse := APIErrorResponse{
-		Code:       err.Code,
-		Message:    errBody,
-		Resource:   reqURL.Path,
-		BucketName: reqInfo.BucketName,
-		Key:        reqInfo.ObjectName,
-		RequestID:  w.Header().Get(xhttp.AmzRequestID),
-		HostID:     globalDeploymentID,
-	}
-	encodedErrorResponse := encodeResponseJSON(errorResponse)
-	writeResponse(w, err.HTTPStatusCode, encodedErrorResponse, mimeJSON)
+	writeResponse(ctx, w, err.HTTPStatusCode, encodedErrorResponse, mimeJSON)
 }

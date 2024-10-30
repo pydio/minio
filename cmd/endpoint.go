@@ -25,18 +25,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
-	"time"
-
-	humanize "github.com/dustin/go-humanize"
 
 	"github.com/minio/minio-go/v7/pkg/set"
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/mountinfo"
-	xnet "github.com/minio/minio/pkg/net"
 )
 
 // EndpointType - enum for endpoint type.
@@ -86,9 +81,9 @@ func (endpoint Endpoint) HTTPS() bool {
 }
 
 // UpdateIsLocal - resolves the host and updates if it is local or not.
-func (endpoint *Endpoint) UpdateIsLocal() (err error) {
+func (endpoint *Endpoint) UpdateIsLocal(globalPort string) (err error) {
 	if !endpoint.IsLocal {
-		endpoint.IsLocal, err = isLocalHost(endpoint.Hostname(), endpoint.Port(), globalMinioPort)
+		endpoint.IsLocal, err = isLocalHost(endpoint.Hostname(), endpoint.Port(), globalPort)
 		if err != nil {
 			return err
 		}
@@ -285,52 +280,6 @@ func (l EndpointServerPools) Hostnames() []string {
 	return foundSet.ToSlice()
 }
 
-// hostsSorted will return all hosts found.
-// The LOCAL host will be nil, but the indexes of all hosts should
-// remain consistent across the cluster.
-func (l EndpointServerPools) hostsSorted() []*xnet.Host {
-	peers, localPeer := l.peers()
-	sort.Strings(peers)
-	hosts := make([]*xnet.Host, len(peers))
-	for i, hostStr := range peers {
-		if hostStr == localPeer {
-			continue
-		}
-		host, err := xnet.ParseHost(hostStr)
-		if err != nil {
-			logger.LogIf(GlobalContext, err)
-			continue
-		}
-		hosts[i] = host
-	}
-
-	return hosts
-}
-
-// peers will return all peers, including local.
-// The local peer is returned as a separate string.
-func (l EndpointServerPools) peers() (peers []string, local string) {
-	allSet := set.NewStringSet()
-	for _, ep := range l {
-		for _, endpoint := range ep.Endpoints {
-			if endpoint.Type() != URLEndpointType {
-				continue
-			}
-
-			peer := endpoint.Host
-			if endpoint.IsLocal {
-				if _, port := mustSplitHostPort(peer); port == globalMinioPort {
-					local = peer
-				}
-			}
-
-			allSet.Add(peer)
-		}
-	}
-
-	return allSet.ToSlice(), local
-}
-
 // Endpoints - list of same type of endpoint.
 type Endpoints []Endpoint
 
@@ -386,189 +335,6 @@ func (endpoints Endpoints) atleastOneEndpointLocal() bool {
 	return false
 }
 
-// UpdateIsLocal - resolves the host and discovers the local host.
-func (endpoints Endpoints) UpdateIsLocal(foundPrevLocal bool) error {
-	orchestrated := IsDocker() || IsKubernetes()
-	k8sReplicaSet := IsKubernetesReplicaSet()
-
-	var epsResolved int
-	var foundLocal bool
-	resolvedList := make([]bool, len(endpoints))
-	// Mark the starting time
-	startTime := time.Now()
-	keepAliveTicker := time.NewTicker(10 * time.Millisecond)
-	defer keepAliveTicker.Stop()
-	for {
-		// Break if the local endpoint is found already Or all the endpoints are resolved.
-		if foundLocal || (epsResolved == len(endpoints)) {
-			break
-		}
-		// Retry infinitely on Kubernetes and Docker swarm.
-		// This is needed as the remote hosts are sometime
-		// not available immediately.
-		select {
-		case <-globalOSSignalCh:
-			return fmt.Errorf("The endpoint resolution got interrupted")
-		default:
-			for i, resolved := range resolvedList {
-				if resolved {
-					// Continue if host is already resolved.
-					continue
-				}
-
-				// Log the message to console about the host resolving
-				reqInfo := (&logger.ReqInfo{}).AppendTags(
-					"host",
-					endpoints[i].Hostname(),
-				)
-
-				if k8sReplicaSet && hostResolveToLocalhost(endpoints[i]) {
-					err := fmt.Errorf("host %s resolves to 127.*, DNS incorrectly configured retrying",
-						endpoints[i])
-					// time elapsed
-					timeElapsed := time.Since(startTime)
-					// log error only if more than 1s elapsed
-					if timeElapsed > time.Second {
-						reqInfo.AppendTags("elapsedTime",
-							humanize.RelTime(startTime,
-								startTime.Add(timeElapsed),
-								"elapsed",
-								""))
-						ctx := logger.SetReqInfo(GlobalContext, reqInfo)
-						logger.LogIf(ctx, err, logger.Application)
-					}
-					continue
-				}
-
-				// return err if not Docker or Kubernetes
-				// We use IsDocker() to check for Docker environment
-				// We use IsKubernetes() to check for Kubernetes environment
-				isLocal, err := isLocalHost(endpoints[i].Hostname(),
-					endpoints[i].Port(),
-					globalMinioPort,
-				)
-				if err != nil && !orchestrated {
-					return err
-				}
-				if err != nil {
-					// time elapsed
-					timeElapsed := time.Since(startTime)
-					// log error only if more than 1s elapsed
-					if timeElapsed > time.Second {
-						reqInfo.AppendTags("elapsedTime",
-							humanize.RelTime(startTime,
-								startTime.Add(timeElapsed),
-								"elapsed",
-								"",
-							))
-						ctx := logger.SetReqInfo(GlobalContext,
-							reqInfo)
-						logger.LogIf(ctx, err, logger.Application)
-					}
-				} else {
-					resolvedList[i] = true
-					endpoints[i].IsLocal = isLocal
-					if k8sReplicaSet && !endpoints.atleastOneEndpointLocal() && !foundPrevLocal {
-						// In replicated set in k8s deployment, IPs might
-						// get resolved for older IPs, add this code
-						// to ensure that we wait for this server to
-						// participate atleast one disk and be local.
-						//
-						// In special cases for replica set with expanded
-						// pool setups we need to make sure to provide
-						// value of foundPrevLocal from pool1 if we already
-						// found a local setup. Only if we haven't found
-						// previous local we continue to wait to look for
-						// atleast one local.
-						resolvedList[i] = false
-						// time elapsed
-						err := fmt.Errorf("no endpoint is local to this host: %s", endpoints[i])
-						timeElapsed := time.Since(startTime)
-						// log error only if more than 1s elapsed
-						if timeElapsed > time.Second {
-							reqInfo.AppendTags("elapsedTime",
-								humanize.RelTime(startTime,
-									startTime.Add(timeElapsed),
-									"elapsed",
-									"",
-								))
-							ctx := logger.SetReqInfo(GlobalContext,
-								reqInfo)
-							logger.LogIf(ctx, err, logger.Application)
-						}
-						continue
-					}
-					epsResolved++
-					if !foundLocal {
-						foundLocal = isLocal
-					}
-				}
-			}
-
-			// Wait for the tick, if the there exist a local endpoint in discovery.
-			// Non docker/kubernetes environment we do not need to wait.
-			if !foundLocal && orchestrated {
-				<-keepAliveTicker.C
-			}
-		}
-	}
-
-	// On Kubernetes/Docker setups DNS resolves inappropriately sometimes
-	// where there are situations same endpoints with multiple disks
-	// come online indicating either one of them is local and some
-	// of them are not local. This situation can never happen and
-	// its only a possibility in orchestrated deployments with dynamic
-	// DNS. Following code ensures that we treat if one of the endpoint
-	// says its local for a given host - it is true for all endpoints
-	// for the same host. Following code ensures that this assumption
-	// is true and it works in all scenarios and it is safe to assume
-	// for a given host.
-	endpointLocalMap := make(map[string]bool)
-	for _, ep := range endpoints {
-		if ep.IsLocal {
-			endpointLocalMap[ep.Host] = ep.IsLocal
-		}
-	}
-	for i := range endpoints {
-		endpoints[i].IsLocal = endpointLocalMap[endpoints[i].Host]
-	}
-	return nil
-}
-
-// NewEndpoints - returns new endpoint list based on input args.
-func NewEndpoints(args ...string) (endpoints Endpoints, err error) {
-	var endpointType EndpointType
-	var scheme string
-
-	uniqueArgs := set.NewStringSet()
-	// Loop through args and adds to endpoint list.
-	for i, arg := range args {
-		endpoint, err := NewEndpoint(arg)
-		if err != nil {
-			return nil, fmt.Errorf("'%s': %s", arg, err.Error())
-		}
-
-		// All endpoints have to be same type and scheme if applicable.
-		if i == 0 {
-			endpointType = endpoint.Type()
-			scheme = endpoint.Scheme
-		} else if endpoint.Type() != endpointType {
-			return nil, fmt.Errorf("mixed style endpoints are not supported")
-		} else if endpoint.Scheme != scheme {
-			return nil, fmt.Errorf("mixed scheme is not supported")
-		}
-
-		arg = endpoint.String()
-		if uniqueArgs.Contains(arg) {
-			return nil, fmt.Errorf("duplicate endpoints found")
-		}
-		uniqueArgs.Add(arg)
-		endpoints = append(endpoints, endpoint)
-	}
-
-	return endpoints, nil
-}
-
 // Checks if there are any cross device mounts.
 func checkCrossDeviceMounts(endpoints Endpoints) (err error) {
 	var absPaths []string
@@ -586,7 +352,7 @@ func checkCrossDeviceMounts(endpoints Endpoints) (err error) {
 }
 
 // CreateEndpoints - validates and creates new endpoints for given args.
-func CreateEndpoints(serverAddr string, foundLocal bool, args ...[]string) (Endpoints, SetupType, error) {
+func CreateEndpoints(serverAddr, globalPort string, foundLocal bool, args ...[]string) (Endpoints, SetupType, error) {
 	var endpoints Endpoints
 	var setupType SetupType
 	var err error
@@ -603,7 +369,7 @@ func CreateEndpoints(serverAddr string, foundLocal bool, args ...[]string) (Endp
 		if err != nil {
 			return endpoints, setupType, err
 		}
-		if err := endpoint.UpdateIsLocal(); err != nil {
+		if err := endpoint.UpdateIsLocal(globalPort); err != nil {
 			return endpoints, setupType, err
 		}
 		if endpoint.Type() != PathEndpointType {

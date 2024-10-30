@@ -19,22 +19,18 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
 	pathutil "path"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
-
-	"fmt"
 	"time"
 
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/dsync"
 	"github.com/minio/minio/pkg/lsync"
 )
-
-// local lock servers
-var globalLockServer *localLocker
 
 // RWLocker - locker interface to introduce GetRLock, RUnlock.
 type RWLocker interface {

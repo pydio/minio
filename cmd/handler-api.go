@@ -40,7 +40,7 @@ type apiConfig struct {
 	replicationWorkers int
 }
 
-func (t *apiConfig) init(cfg api.Config, setDriveCounts []int) {
+func (t *apiConfig) init(g *Globals, cfg api.Config, setDriveCounts []int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -65,8 +65,8 @@ func (t *apiConfig) init(cfg api.Config, setDriveCounts []int) {
 		apiRequestsMaxPerNode = int(stats.TotalRAM / uint64(t.totalDriveCount*(blockSizeLarge+blockSizeSmall)+int(blockSizeV1*2+blockSizeV2*2)))
 	} else {
 		apiRequestsMaxPerNode = cfg.RequestsMax
-		if len(globalEndpoints.Hostnames()) > 0 {
-			apiRequestsMaxPerNode /= len(globalEndpoints.Hostnames())
+		if len(g.Endpoints.Hostnames()) > 0 {
+			apiRequestsMaxPerNode /= len(g.Endpoints.Hostnames())
 		}
 	}
 	if cap(t.requestsPool) < apiRequestsMaxPerNode {
@@ -80,10 +80,6 @@ func (t *apiConfig) init(cfg api.Config, setDriveCounts []int) {
 	t.requestsDeadline = cfg.RequestsDeadline
 	t.listQuorum = cfg.GetListQuorum()
 	t.extendListLife = cfg.ExtendListLife
-	if globalReplicationPool != nil &&
-		cfg.ReplicationWorkers != t.replicationWorkers {
-		globalReplicationPool.Resize(cfg.ReplicationWorkers)
-	}
 	t.replicationWorkers = cfg.ReplicationWorkers
 }
 
@@ -135,13 +131,14 @@ func (t *apiConfig) getRequestsPool() (chan struct{}, time.Duration) {
 // maxClients throttles the S3 API calls
 func maxClients(f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		pool, deadline := globalAPIConfig.getRequestsPool()
+		globals := mustGlobalsFromContext(r.Context())
+		pool, deadline := globals.APIConfig.getRequestsPool()
 		if pool == nil {
 			f.ServeHTTP(w, r)
 			return
 		}
 
-		globalHTTPStats.addRequestsInQueue(1)
+		globals.HTTPStats.addRequestsInQueue(1)
 
 		deadlineTimer := time.NewTimer(deadline)
 		defer deadlineTimer.Stop()
@@ -149,17 +146,17 @@ func maxClients(f http.HandlerFunc) http.HandlerFunc {
 		select {
 		case pool <- struct{}{}:
 			defer func() { <-pool }()
-			globalHTTPStats.addRequestsInQueue(-1)
+			globals.HTTPStats.addRequestsInQueue(-1)
 			f.ServeHTTP(w, r)
 		case <-deadlineTimer.C:
 			// Send a http timeout message
 			writeErrorResponse(r.Context(), w,
-				errorCodes.ToAPIErr(ErrOperationMaxedOut),
+				errorCodes.ToAPIErr(r.Context(), ErrOperationMaxedOut),
 				r.URL, guessIsBrowserReq(r))
-			globalHTTPStats.addRequestsInQueue(-1)
+			globals.HTTPStats.addRequestsInQueue(-1)
 			return
 		case <-r.Context().Done():
-			globalHTTPStats.addRequestsInQueue(-1)
+			globals.HTTPStats.addRequestsInQueue(-1)
 			return
 		}
 	}

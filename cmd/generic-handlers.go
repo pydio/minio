@@ -23,6 +23,7 @@ import (
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
+	"github.com/gorilla/mux"
 
 	"github.com/minio/minio/cmd/crypto"
 	xhttp "github.com/minio/minio/cmd/http"
@@ -60,8 +61,9 @@ const (
 func setRequestHeaderSizeLimitHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if isHTTPHeaderSizeTooLarge(r.Header) {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrMetadataTooLarge), r.URL, guessIsBrowserReq(r))
-			atomic.AddUint64(&globalHTTPStats.rejectedRequestsHeader, 1)
+			globals := mustGlobalsFromContext(r.Context())
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrMetadataTooLarge), r.URL, guessIsBrowserReq(r))
+			atomic.AddUint64(&globals.HTTPStats.rejectedRequestsHeader, 1)
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -101,7 +103,7 @@ const (
 func filterReservedMetadata(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if containsReservedMetadata(r.Header) {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrUnsupportedMetadata), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrUnsupportedMetadata), r.URL, guessIsBrowserReq(r))
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -129,7 +131,7 @@ const (
 
 func setRedirectHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !shouldProxy() || guessIsRPCReq(r) || guessIsBrowserReq(r) ||
+		if guessIsRPCReq(r) || guessIsBrowserReq(r) ||
 			guessIsHealthCheckReq(r) || guessIsMetricsReq(r) || isAdminReq(r) {
 			h.ServeHTTP(w, r)
 			return
@@ -146,29 +148,6 @@ func setRedirectHandler(h http.Handler) http.Handler {
 		*/
 		h.ServeHTTP(w, r)
 	})
-}
-
-func setBrowserRedirectHandler(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Re-direction is handled specifically for browser requests.
-		if globalBrowserEnabled && guessIsBrowserReq(r) {
-			// Fetch the redirect location if any.
-			redirectLocation := getRedirectLocation(r.URL.Path)
-			if redirectLocation != "" {
-				// Employ a temporary re-direct.
-				http.Redirect(w, r, redirectLocation, http.StatusTemporaryRedirect)
-				return
-			}
-		}
-		h.ServeHTTP(w, r)
-	})
-}
-
-func shouldProxy() bool {
-	if newObjectLayerFn() == nil {
-		return true
-	}
-	return !globalIAMSys.Initialized()
 }
 
 // Fetch redirect location if urlPath satisfies certain
@@ -200,12 +179,7 @@ func getRedirectLocation(urlPath string) (rLocation string) {
 // since User-Agent's can be arbitrary. But this is just
 // a best effort function.
 func guessIsBrowserReq(req *http.Request) bool {
-	if req == nil {
-		return false
-	}
-	aType := getRequestAuthType(req)
-	return strings.Contains(req.Header.Get("User-Agent"), "Mozilla") && globalBrowserEnabled &&
-		(aType == authTypeJWT || aType == authTypeAnonymous)
+	return false
 }
 
 // guessIsHealthCheckReq - returns true if incoming request looks
@@ -225,14 +199,7 @@ func guessIsHealthCheckReq(req *http.Request) bool {
 // guessIsMetricsReq - returns true if incoming request looks
 // like metrics request
 func guessIsMetricsReq(req *http.Request) bool {
-	if req == nil {
-		return false
-	}
-	aType := getRequestAuthType(req)
-	return (aType == authTypeAnonymous || aType == authTypeJWT) &&
-		req.URL.Path == minioReservedBucketPath+prometheusMetricsPathLegacy ||
-		req.URL.Path == minioReservedBucketPath+prometheusMetricsV2ClusterPath ||
-		req.URL.Path == minioReservedBucketPath+prometheusMetricsV2NodePath
+	return false
 }
 
 // guessIsRPCReq - returns true if the request is for an RPC endpoint.
@@ -242,27 +209,6 @@ func guessIsRPCReq(req *http.Request) bool {
 	}
 	return req.Method == http.MethodPost &&
 		strings.HasPrefix(req.URL.Path, minioReservedBucketPath+SlashSeparator)
-}
-
-// Adds Cache-Control header
-func setBrowserCacheControlHandler(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if globalBrowserEnabled && r.Method == http.MethodGet && guessIsBrowserReq(r) {
-			// For all browser requests set appropriate Cache-Control policies
-			if HasPrefix(r.URL.Path, minioReservedBucketPath+SlashSeparator) {
-				if HasSuffix(r.URL.Path, ".js") || r.URL.Path == minioReservedBucketPath+"/favicon.ico" {
-					// For assets set cache expiry of one year. For each release, the name
-					// of the asset name will change and hence it can not be served from cache.
-					w.Header().Set(xhttp.CacheControl, "max-age=31536000")
-				} else {
-					// For non asset requests we serve index.html which will never be cached.
-					w.Header().Set(xhttp.CacheControl, "no-store")
-				}
-			}
-		}
-
-		h.ServeHTTP(w, r)
-	})
 }
 
 // Check to allow access to the reserved "bucket" `/minio` for Admin
@@ -288,7 +234,7 @@ func setReservedBucketHandler(h http.Handler) http.Handler {
 		bucketName, _ := request2BucketObjectName(r)
 		if isMinioReservedBucket(bucketName) || isMinioMetaBucket(bucketName) {
 			if !guessIsRPCReq(r) && !guessIsBrowserReq(r) && !guessIsHealthCheckReq(r) && !guessIsMetricsReq(r) && !isAdminReq(r) {
-				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrAllAccessDisabled), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrAllAccessDisabled), r.URL, guessIsBrowserReq(r))
 				return
 			}
 		}
@@ -345,16 +291,18 @@ func setTimeValidityHandler(h http.Handler) http.Handler {
 				// All our internal APIs are sensitive towards Date
 				// header, for all requests where Date header is not
 				// present we will reject such clients.
-				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(errCode), r.URL, guessIsBrowserReq(r))
-				atomic.AddUint64(&globalHTTPStats.rejectedRequestsTime, 1)
+				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), errCode), r.URL, guessIsBrowserReq(r))
+				globals := mustGlobalsFromContext(r.Context())
+				atomic.AddUint64(&globals.HTTPStats.rejectedRequestsTime, 1)
 				return
 			}
 			// Verify if the request date header is shifted by less than globalMaxSkewTime parameter in the past
 			// or in the future, reject request otherwise.
 			curTime := UTCNow()
 			if curTime.Sub(amzDate) > globalMaxSkewTime || amzDate.Sub(curTime) > globalMaxSkewTime {
-				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrRequestTimeTooSkewed), r.URL, guessIsBrowserReq(r))
-				atomic.AddUint64(&globalHTTPStats.rejectedRequestsTime, 1)
+				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrRequestTimeTooSkewed), r.URL, guessIsBrowserReq(r))
+				globals := mustGlobalsFromContext(r.Context())
+				atomic.AddUint64(&globals.HTTPStats.rejectedRequestsTime, 1)
 				return
 			}
 		}
@@ -372,13 +320,14 @@ func setHTTPStatsHandler(h http.Handler) http.Handler {
 		// Execute the request
 		r.Body = meteredRequest
 		h.ServeHTTP(meteredResponse, r)
+		globals := mustGlobalsFromContext(r.Context())
 
 		if strings.HasPrefix(r.URL.Path, minioReservedBucketPath) {
-			globalConnStats.incInputBytes(meteredRequest.BytesCount())
-			globalConnStats.incOutputBytes(meteredResponse.BytesCount())
+			globals.ConnStats.incInputBytes(meteredRequest.BytesCount())
+			globals.ConnStats.incOutputBytes(meteredResponse.BytesCount())
 		} else {
-			globalConnStats.incS3InputBytes(meteredRequest.BytesCount())
-			globalConnStats.incS3OutputBytes(meteredResponse.BytesCount())
+			globals.ConnStats.incS3InputBytes(meteredRequest.BytesCount())
+			globals.ConnStats.incS3OutputBytes(meteredResponse.BytesCount())
 		}
 	})
 }
@@ -421,23 +370,26 @@ func setRequestValidityHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check for bad components in URL path.
 		if hasBadPathComponent(r.URL.Path) {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidResourceName), r.URL, guessIsBrowserReq(r))
-			atomic.AddUint64(&globalHTTPStats.rejectedRequestsInvalid, 1)
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrInvalidResourceName), r.URL, guessIsBrowserReq(r))
+			globals := mustGlobalsFromContext(r.Context())
+			atomic.AddUint64(&globals.HTTPStats.rejectedRequestsInvalid, 1)
 			return
 		}
 		// Check for bad components in URL query values.
 		for _, vv := range r.URL.Query() {
 			for _, v := range vv {
 				if hasBadPathComponent(v) {
-					writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidResourceName), r.URL, guessIsBrowserReq(r))
-					atomic.AddUint64(&globalHTTPStats.rejectedRequestsInvalid, 1)
+					writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrInvalidResourceName), r.URL, guessIsBrowserReq(r))
+					globals := mustGlobalsFromContext(r.Context())
+					atomic.AddUint64(&globals.HTTPStats.rejectedRequestsInvalid, 1)
 					return
 				}
 			}
 		}
 		if hasMultipleAuth(r) {
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
-			atomic.AddUint64(&globalHTTPStats.rejectedRequestsInvalid, 1)
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
+			globals := mustGlobalsFromContext(r.Context())
+			atomic.AddUint64(&globals.HTTPStats.rejectedRequestsInvalid, 1)
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -475,7 +427,7 @@ type criticalErrorHandler struct{ handler http.Handler }
 func (h criticalErrorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if err := recover(); err == logger.ErrCritical { // handle
-			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInternalError), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrInternalError), r.URL, guessIsBrowserReq(r))
 			return
 		} else if err != nil {
 			panic(err) // forward other panic calls
@@ -488,14 +440,24 @@ func (h criticalErrorHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) 
 func setSSETLSHandler(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Deny SSE-C requests if not made over TLS
-		if !globalIsTLS && (crypto.SSEC.IsRequested(r.Header) || crypto.SSECopy.IsRequested(r.Header)) {
+		globals := mustGlobalsFromContext(r.Context())
+		if !globals.IsTLS && (crypto.SSEC.IsRequested(r.Header) || crypto.SSECopy.IsRequested(r.Header)) {
 			if r.Method == http.MethodHead {
-				writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrInsecureSSECustomerRequest))
+				writeErrorResponseHeadersOnly(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrInsecureSSECustomerRequest))
 			} else {
-				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrInsecureSSECustomerRequest), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrInsecureSSECustomerRequest), r.URL, guessIsBrowserReq(r))
 			}
 			return
 		}
 		h.ServeHTTP(w, r)
 	})
+}
+
+func injectGlobalsHandler(g *Globals) mux.MiddlewareFunc {
+	return func(h http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := passGlobalsInContext(r.Context(), g)
+			h.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

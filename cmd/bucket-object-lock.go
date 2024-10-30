@@ -30,12 +30,14 @@ import (
 )
 
 // BucketObjectLockSys - map of bucket and retention configuration.
-type BucketObjectLockSys struct{}
+type BucketObjectLockSys struct {
+	Globals *Globals
+}
 
 // Get - Get retention configuration.
 func (sys *BucketObjectLockSys) Get(bucketName string) (r objectlock.Retention, err error) {
-	if globalIsGateway {
-		objAPI := newObjectLayerFn()
+	if sys.Globals.IsGateway {
+		objAPI := sys.Globals.newObjectLayerFn()
 		if objAPI == nil {
 			return r, errServerNotInitialized
 		}
@@ -43,7 +45,7 @@ func (sys *BucketObjectLockSys) Get(bucketName string) (r objectlock.Retention, 
 		return r, nil
 	}
 
-	config, err := globalBucketMetadataSys.GetObjectLockConfig(bucketName)
+	config, err := sys.Globals.BucketMetadataSys.GetObjectLockConfig(bucketName)
 	if err != nil {
 		if _, ok := err.(BucketObjectLockConfigNotFound); ok {
 			return r, nil
@@ -199,18 +201,13 @@ func enforceRetentionBypassForPut(ctx context.Context, r *http.Request, bucket, 
 	if ret.Mode.Valid() {
 		// Retention has expired you may change whatever you like.
 		if ret.RetainUntilDate.Before(t) {
-			perm := isPutRetentionAllowed(bucket, object,
-				days, objRetention.RetainUntilDate.Time,
-				objRetention.Mode, byPassSet, r, cred,
-				owner, claims)
+			perm := isPutRetentionAllowed(ctx, bucket, object, days, objRetention.RetainUntilDate.Time, objRetention.Mode, byPassSet, r, cred, owner, claims)
 			return oi, perm
 		}
 
 		switch ret.Mode {
 		case objectlock.RetGovernance:
-			govPerm := isPutRetentionAllowed(bucket, object, days,
-				objRetention.RetainUntilDate.Time, objRetention.Mode,
-				byPassSet, r, cred, owner, claims)
+			govPerm := isPutRetentionAllowed(ctx, bucket, object, days, objRetention.RetainUntilDate.Time, objRetention.Mode, byPassSet, r, cred, owner, claims)
 			// Governance mode retention period cannot be shortened, if x-amz-bypass-governance is not set.
 			if !byPassSet {
 				if objRetention.Mode != objectlock.RetGovernance || objRetention.RetainUntilDate.Before((ret.RetainUntilDate.Time)) {
@@ -224,17 +221,13 @@ func enforceRetentionBypassForPut(ctx context.Context, r *http.Request, bucket, 
 			if objRetention.Mode != objectlock.RetCompliance || objRetention.RetainUntilDate.Before((ret.RetainUntilDate.Time)) {
 				return oi, ErrObjectLocked
 			}
-			compliancePerm := isPutRetentionAllowed(bucket, object,
-				days, objRetention.RetainUntilDate.Time, objRetention.Mode,
-				false, r, cred, owner, claims)
+			compliancePerm := isPutRetentionAllowed(ctx, bucket, object, days, objRetention.RetainUntilDate.Time, objRetention.Mode, false, r, cred, owner, claims)
 			return oi, compliancePerm
 		}
 		return oi, ErrNone
 	} // No pre-existing retention metadata present.
 
-	perm := isPutRetentionAllowed(bucket, object,
-		days, objRetention.RetainUntilDate.Time,
-		objRetention.Mode, byPassSet, r, cred, owner, claims)
+	perm := isPutRetentionAllowed(ctx, bucket, object, days, objRetention.RetainUntilDate.Time, objRetention.Mode, byPassSet, r, cred, owner, claims)
 	return oi, perm
 }
 
@@ -256,7 +249,8 @@ func checkPutObjectLockAllowed(ctx context.Context, rq *http.Request, bucket, ob
 	retentionRequested := objectlock.IsObjectLockRetentionRequested(rq.Header)
 	legalHoldRequested := objectlock.IsObjectLockLegalHoldRequested(rq.Header)
 
-	retentionCfg, err := globalBucketObjectLockSys.Get(bucket)
+	globals := mustGlobalsFromContext(ctx)
+	retentionCfg, err := globals.BucketObjectLockSys.Get(bucket)
 	if err != nil {
 		return mode, retainDate, legalHold, ErrInvalidBucketObjectLockConfiguration
 	}
@@ -343,6 +337,6 @@ func checkPutObjectLockAllowed(ctx context.Context, rq *http.Request, bucket, ob
 }
 
 // NewBucketObjectLockSys returns initialized BucketObjectLockSys
-func NewBucketObjectLockSys() *BucketObjectLockSys {
-	return &BucketObjectLockSys{}
+func NewBucketObjectLockSys(g *Globals) *BucketObjectLockSys {
+	return &BucketObjectLockSys{Globals: g}
 }

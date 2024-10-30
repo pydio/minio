@@ -176,7 +176,6 @@ func getSetIndexes(args []string, totalSizes []uint64, customSetDriveCount uint6
 
 		// No automatic symmetry calculation expected, user is on their own
 		setSize = customSetDriveCount
-		globalCustomErasureDriveCount = true
 	} else {
 		// Returns possible set counts with symmetry.
 		setCounts = possibleSetCountsWithSymmetry(setCounts, argPatterns)
@@ -332,13 +331,9 @@ const (
 	EnvErasureSetDriveCount = "MINIO_ERASURE_SET_DRIVE_COUNT"
 )
 
-var (
-	globalCustomErasureDriveCount = false
-)
-
 // CreateServerEndpoints - validates and creates new endpoints from input args, supports
 // both ellipses and without ellipses transparently.
-func createServerEndpoints(serverAddr string, args ...string) (
+func createServerEndpoints(serverAddr, globalPort string, args ...string) (
 	endpointServerPools EndpointServerPools, setupType SetupType, err error) {
 
 	if len(args) == 0 {
@@ -349,7 +344,7 @@ func createServerEndpoints(serverAddr string, args ...string) (
 	if err != nil {
 		return nil, -1, err
 	}
-	endpointList, newSetupType, err := CreateEndpoints(serverAddr, false, setArgs...)
+	endpointList, newSetupType, err := CreateEndpoints(serverAddr, globalPort, false, setArgs...)
 	if err != nil {
 		return nil, -1, err
 	}

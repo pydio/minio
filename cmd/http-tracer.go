@@ -130,7 +130,8 @@ func WebTrace(ri *jsonrpc.RequestInfo) trace.Info {
 	t := trace.Info{TraceType: trace.HTTP, FuncName: name, Time: now}
 	t.NodeName = r.Host
 	if t.NodeName == "" {
-		t.NodeName = globalLocalNodeName
+		globals := mustGlobalsFromContext(r.Context())
+		t.NodeName = globals.LocalNodeName
 	}
 
 	// strip only standard port from the host address
@@ -198,7 +199,8 @@ func Trace(f http.HandlerFunc, logBody bool, w http.ResponseWriter, r *http.Requ
 
 	t.NodeName = r.Host
 	if t.NodeName == "" {
-		t.NodeName = globalLocalNodeName
+		globals := mustGlobalsFromContext(r.Context())
+		t.NodeName = globals.LocalNodeName
 	}
 
 	// strip only standard port from the host address

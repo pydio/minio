@@ -22,7 +22,6 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -123,59 +122,6 @@ func getRequestAuthType(r *http.Request) authType {
 	return authTypeUnknown
 }
 
-func validateAdminSignature(ctx context.Context, r *http.Request, region string) (auth.Credentials, map[string]interface{}, bool, APIErrorCode) {
-	var cred auth.Credentials
-	var owner bool
-	s3Err := ErrAccessDenied
-	if _, ok := r.Header[xhttp.AmzContentSha256]; ok &&
-		getRequestAuthType(r) == authTypeSigned && !skipContentSha256Cksum(r) {
-		// We only support admin credentials to access admin APIs.
-		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
-		if s3Err != ErrNone {
-			return cred, nil, owner, s3Err
-		}
-
-		// we only support V4 (no presign) with auth body
-		s3Err = isReqAuthenticated(ctx, r, region, serviceS3)
-	}
-	if s3Err != ErrNone {
-		reqInfo := (&logger.ReqInfo{}).AppendTags("requestHeaders", dumpRequest(r))
-		ctx := logger.SetReqInfo(ctx, reqInfo)
-		logger.LogIf(ctx, errors.New(getAPIError(s3Err).Description), logger.Application)
-		return cred, nil, owner, s3Err
-	}
-
-	claims, s3Err := checkClaimsFromToken(r, cred)
-	if s3Err != ErrNone {
-		return cred, nil, owner, s3Err
-	}
-
-	return cred, claims, owner, ErrNone
-}
-
-// checkAdminRequestAuth checks for authentication and authorization for the incoming
-// request. It only accepts V2 and V4 requests. Presigned, JWT and anonymous requests
-// are automatically rejected.
-func checkAdminRequestAuth(ctx context.Context, r *http.Request, action iampolicy.AdminAction, region string) (auth.Credentials, APIErrorCode) {
-	cred, claims, owner, s3Err := validateAdminSignature(ctx, r, region)
-	if s3Err != ErrNone {
-		return cred, s3Err
-	}
-	if globalIAMSys.IsAllowed(iampolicy.Args{
-		AccountName:     cred.AccessKey,
-		Groups:          cred.Groups,
-		Action:          iampolicy.Action(action),
-		ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
-		IsOwner:         owner,
-		Claims:          claims,
-	}) {
-		// Request is allowed return the appropriate access key.
-		return cred, ErrNone
-	}
-
-	return cred, ErrAccessDenied
-}
-
 // Fetch the security token set by the client.
 func getSessionToken(r *http.Request) (token string) {
 	token = r.Header.Get(xhttp.AmzSecurityToken)
@@ -188,12 +134,13 @@ func getSessionToken(r *http.Request) (token string) {
 // Fetch claims in the security token returned by the client, doesn't return
 // errors - upon errors the returned claims map will be empty.
 func mustGetClaimsFromToken(r *http.Request) map[string]interface{} {
-	claims, _ := getClaimsFromToken(getSessionToken(r))
+	globals := mustGlobalsFromContext(r.Context())
+	claims, _ := getClaimsFromToken(globals.ActiveCred, getSessionToken(r))
 	return claims
 }
 
 // Fetch claims in the security token returned by the client.
-func getClaimsFromToken(token string) (map[string]interface{}, error) {
+func getClaimsFromToken(cred auth.Credentials, token string) (map[string]interface{}, error) {
 	if token == "" {
 		claims := xjwt.NewMapClaims()
 		return claims.Map(), nil
@@ -207,7 +154,7 @@ func getClaimsFromToken(token string) (map[string]interface{}, error) {
 	// hijacking the policies. We need to make sure that this is
 	// based an admin credential such that token cannot be decoded
 	// on the client side and is treated like an opaque value.
-	claims, err := auth.ExtractClaims(token, globalActiveCred.SecretKey)
+	claims, err := auth.ExtractClaims(token, cred.SecretKey)
 	if err != nil {
 		return nil, errAuthentication
 	}
@@ -215,9 +162,8 @@ func getClaimsFromToken(token string) (map[string]interface{}, error) {
 	// If OPA is not set, session token should
 	// have a policy and its mandatory, reject
 	// requests without policy claim.
-	_, pokOpenID := claims.MapClaims[iamPolicyClaimNameOpenID()]
 	_, pokSA := claims.MapClaims[iamPolicyClaimNameSA()]
-	if !pokOpenID && !pokSA {
+	if !pokSA {
 		return nil, errAuthentication
 	}
 
@@ -251,7 +197,8 @@ func checkClaimsFromToken(r *http.Request, cred auth.Credentials) (map[string]in
 	if subtle.ConstantTimeCompare([]byte(token), []byte(cred.SessionToken)) != 1 {
 		return nil, ErrInvalidToken
 	}
-	claims, err := getClaimsFromToken(token)
+	globals := mustGlobalsFromContext(r.Context())
+	claims, err := getClaimsFromToken(globals.ActiveCred, getSessionToken(r))
 	if err != nil {
 		return nil, toAPIErrorCode(r.Context(), err)
 	}
@@ -277,6 +224,7 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 // returns APIErrorCode if any to be replied to the client.
 // Additionally returns the accessKey used in the request, and if this request is by an admin.
 func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (cred auth.Credentials, owner bool, s3Err APIErrorCode) {
+	globals := mustGlobalsFromContext(ctx)
 	switch getRequestAuthType(r) {
 	case authTypeUnknown, authTypeStreamingSigned:
 		return cred, owner, ErrSignatureVersionNotSupported
@@ -286,7 +234,7 @@ func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action
 		}
 		cred, owner, s3Err = getReqAccessKeyV2(r)
 	case authTypeSigned, authTypePresigned:
-		region := globalServerRegion
+		region := globals.ServerRegion
 		switch action {
 		case policy.GetBucketLocationAction, policy.ListAllMyBucketsAction:
 			region = ""
@@ -334,7 +282,7 @@ func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action
 
 	if action != policy.ListAllMyBucketsAction && cred.AccessKey == "" {
 		// Anonymous checks are not meant for ListBuckets action
-		if globalPolicySys.IsAllowed(policy.Args{
+		if globals.PolicySys.IsAllowed(policy.Args{
 			AccountName:     cred.AccessKey,
 			Action:          action,
 			BucketName:      bucketName,
@@ -349,7 +297,7 @@ func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action
 		if action == policy.ListBucketVersionsAction {
 			// In AWS S3 s3:ListBucket permission is same as s3:ListBucketVersions permission
 			// verify as a fallback.
-			if globalPolicySys.IsAllowed(policy.Args{
+			if globals.PolicySys.IsAllowed(policy.Args{
 				AccountName:     cred.AccessKey,
 				Action:          policy.ListBucketAction,
 				BucketName:      bucketName,
@@ -365,7 +313,7 @@ func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action
 		return cred, owner, ErrAccessDenied
 	}
 
-	if globalIAMSys.IsAllowed(iampolicy.Args{
+	if globals.IAMSys.IsAllowed(iampolicy.Args{
 		AccountName:     cred.AccessKey,
 		Groups:          cred.Groups,
 		Action:          iampolicy.Action(action),
@@ -382,7 +330,7 @@ func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action
 	if action == policy.ListBucketVersionsAction {
 		// In AWS S3 s3:ListBucket permission is same as s3:ListBucketVersions permission
 		// verify as a fallback.
-		if globalIAMSys.IsAllowed(iampolicy.Args{
+		if globals.IAMSys.IsAllowed(iampolicy.Args{
 			AccountName:     cred.AccessKey,
 			Groups:          cred.Groups,
 			Action:          iampolicy.ListBucketAction,
@@ -485,24 +433,20 @@ func setAuthHandler(h http.Handler) http.Handler {
 			h.ServeHTTP(w, r)
 			return
 		} else if aType == authTypeJWT {
-			// Validate Authorization header if its valid for JWT request.
-			if _, _, authErr := webRequestAuthenticate(r); authErr != nil {
-				w.WriteHeader(http.StatusUnauthorized)
-				w.Write([]byte(authErr.Error()))
-				return
-			}
 			h.ServeHTTP(w, r)
 			return
 		} else if aType == authTypeSTS {
 			h.ServeHTTP(w, r)
 			return
 		}
-		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(ErrSignatureVersionNotSupported), r.URL, guessIsBrowserReq(r))
-		atomic.AddUint64(&globalHTTPStats.rejectedRequestsAuth, 1)
+		globals := mustGlobalsFromContext(r.Context())
+		writeErrorResponse(r.Context(), w, errorCodes.ToAPIErr(r.Context(), ErrSignatureVersionNotSupported), r.URL, guessIsBrowserReq(r))
+		atomic.AddUint64(&globals.HTTPStats.rejectedRequestsAuth, 1)
 	})
 }
 
 func validateSignature(atype authType, r *http.Request) (auth.Credentials, bool, map[string]interface{}, APIErrorCode) {
+	globals := mustGlobalsFromContext(r.Context())
 	var cred auth.Credentials
 	var owner bool
 	var s3Err APIErrorCode
@@ -515,7 +459,7 @@ func validateSignature(atype authType, r *http.Request) (auth.Credentials, bool,
 		}
 		cred, owner, s3Err = getReqAccessKeyV2(r)
 	case authTypePresigned, authTypeSigned:
-		region := globalServerRegion
+		region := globals.ServerRegion
 		if s3Err = isReqAuthenticated(GlobalContext, r, region, serviceS3); s3Err != ErrNone {
 			return cred, owner, nil, s3Err
 		}
@@ -533,7 +477,8 @@ func validateSignature(atype authType, r *http.Request) (auth.Credentials, bool,
 	return cred, owner, claims, ErrNone
 }
 
-func isPutRetentionAllowed(bucketName, objectName string, retDays int, retDate time.Time, retMode objectlock.RetMode, byPassSet bool, r *http.Request, cred auth.Credentials, owner bool, claims map[string]interface{}) (s3Err APIErrorCode) {
+func isPutRetentionAllowed(ctx context.Context, bucketName, objectName string, retDays int, retDate time.Time, retMode objectlock.RetMode, byPassSet bool, r *http.Request, cred auth.Credentials, owner bool, claims map[string]interface{}) (s3Err APIErrorCode) {
+	globals := mustGlobalsFromContext(ctx)
 	var retSet bool
 	if cred.AccessKey == "" {
 		conditions := getConditionValues(r, "", "", nil)
@@ -543,7 +488,7 @@ func isPutRetentionAllowed(bucketName, objectName string, retDays int, retDate t
 			conditions["object-lock-remaining-retention-days"] = []string{strconv.Itoa(retDays)}
 		}
 		if retMode == objectlock.RetGovernance && byPassSet {
-			byPassSet = globalPolicySys.IsAllowed(policy.Args{
+			byPassSet = globals.PolicySys.IsAllowed(policy.Args{
 				AccountName:     cred.AccessKey,
 				Groups:          cred.Groups,
 				Action:          policy.BypassGovernanceRetentionAction,
@@ -553,7 +498,7 @@ func isPutRetentionAllowed(bucketName, objectName string, retDays int, retDate t
 				ObjectName:      objectName,
 			})
 		}
-		if globalPolicySys.IsAllowed(policy.Args{
+		if globals.PolicySys.IsAllowed(policy.Args{
 			AccountName:     cred.AccessKey,
 			Groups:          cred.Groups,
 			Action:          policy.PutObjectRetentionAction,
@@ -577,7 +522,7 @@ func isPutRetentionAllowed(bucketName, objectName string, retDays int, retDate t
 		conditions["object-lock-remaining-retention-days"] = []string{strconv.Itoa(retDays)}
 	}
 	if retMode == objectlock.RetGovernance && byPassSet {
-		byPassSet = globalIAMSys.IsAllowed(iampolicy.Args{
+		byPassSet = globals.IAMSys.IsAllowed(iampolicy.Args{
 			AccountName:     cred.AccessKey,
 			Groups:          cred.Groups,
 			Action:          iampolicy.BypassGovernanceRetentionAction,
@@ -588,7 +533,7 @@ func isPutRetentionAllowed(bucketName, objectName string, retDays int, retDate t
 			Claims:          claims,
 		})
 	}
-	if globalIAMSys.IsAllowed(iampolicy.Args{
+	if globals.IAMSys.IsAllowed(iampolicy.Args{
 		AccountName:     cred.AccessKey,
 		Groups:          cred.Groups,
 		Action:          iampolicy.PutObjectRetentionAction,
@@ -610,6 +555,7 @@ func isPutRetentionAllowed(bucketName, objectName string, retDays int, retDate t
 // call verifies bucket policies and IAM policies, supports multi user
 // checks etc.
 func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectName string, r *http.Request, action iampolicy.Action) (s3Err APIErrorCode) {
+	globals := mustGlobalsFromContext(ctx)
 	var cred auth.Credentials
 	var owner bool
 	switch atype {
@@ -618,7 +564,7 @@ func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectN
 	case authTypeSignedV2, authTypePresignedV2:
 		cred, owner, s3Err = getReqAccessKeyV2(r)
 	case authTypeStreamingSigned, authTypePresigned, authTypeSigned:
-		region := globalServerRegion
+		region := globals.ServerRegion
 		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
 	}
 	if s3Err != ErrNone {
@@ -644,7 +590,7 @@ func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectN
 	}
 
 	if cred.AccessKey == "" {
-		if globalPolicySys.IsAllowed(policy.Args{
+		if globals.PolicySys.IsAllowed(policy.Args{
 			AccountName:     cred.AccessKey,
 			Groups:          cred.Groups,
 			Action:          policy.Action(action),
@@ -658,7 +604,7 @@ func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectN
 		return ErrAccessDenied
 	}
 
-	if globalIAMSys.IsAllowed(iampolicy.Args{
+	if globals.IAMSys.IsAllowed(iampolicy.Args{
 		AccountName:     cred.AccessKey,
 		Groups:          cred.Groups,
 		Action:          action,

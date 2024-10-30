@@ -19,19 +19,22 @@ package cmd
 import (
 	"crypto/x509"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"sync"
 	"time"
 
 	humanize "github.com/dustin/go-humanize"
 
+	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/config/compress"
-	"github.com/minio/minio/cmd/config/identity/openid"
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/bucket/bandwidth"
 	"github.com/minio/minio/pkg/certs"
+	"github.com/minio/minio/pkg/color"
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/pubsub"
 )
@@ -89,14 +92,19 @@ const (
 	maxLocationConstraintSize = 3 * humanize.MiByte
 )
 
-var globalCLIContext = struct {
+type CliContext struct {
 	JSON, Quiet    bool
 	Anonymous      bool
 	Addr           string
 	StrictS3Compat bool
-}{}
+	ConfigDir      *ConfigDir
+	CertsDir       *ConfigDir
+	CertsCADir     *ConfigDir
+}
 
 type Globals struct {
+	CliContext CliContext
+
 	// Indicates if the running minio is in gateway mode.
 	IsGateway bool
 
@@ -136,8 +144,6 @@ type Globals struct {
 	// APIConfig controls S3 API requests throttling,
 	// healthcheck readiness deadlines and cors settings.
 	APIConfig apiConfig
-
-	OpenIDConfig openid.Config
 
 	// CA root certificates, a nil value means system certs pool will be used
 	RootCAs *x509.CertPool
@@ -194,9 +200,6 @@ type Globals struct {
 	BucketQuotaSys      *BucketQuotaSys
 	BucketVersioningSys *BucketVersioningSys
 
-	// Allocated DNS config wrapper over etcd client.
-	DNSConfig interface{}
-
 	// Is compression enabled?
 	CompressConfigMu sync.Mutex
 	CompressConfig   compress.Config
@@ -214,12 +217,17 @@ type Globals struct {
 	FSOSync bool
 
 	DNSCache *xhttp.DNSCache
+
+	ObjLayerMutex sync.RWMutex
+	ObjectAPI     ObjectLayer
+
+	ServerConfig   config.Config
+	ServerConfigMu sync.RWMutex
 }
 
 func NewGlobals() *Globals {
 	return &Globals{
 		IsGateway:                           false,
-		BrowserEnabled:                      false,
 		ServerRegion:                        globalMinioDefaultRegion,
 		MinioPort:                           GlobalMinioDefaultPort,
 		APIConfig:                           apiConfig{listQuorum: 3},
@@ -235,127 +243,114 @@ func NewGlobals() *Globals {
 		standardExcludeCompressExtensions:   []string{".gz", ".bz2", ".rar", ".zip", ".7z", ".xz", ".mp4", ".mkv", ".mov", ".jpg", ".png", ".gif"},
 		standardExcludeCompressContentTypes: []string{"video/*", "audio/*", "application/zip", "application/x-gzip", "application/x-zip-compressed", " application/x-compress", "application/x-spoon"},
 		DNSCache:                            xhttp.NewDNSCache(10*time.Minute, 5*time.Second, logger.LogOnceIf),
+		HTTPServerErrorCh:                   make(chan error),
+		OSSignalCh:                          make(chan os.Signal, 1),
 	}
 }
 
+func (g *Globals) newObjectLayerFn() ObjectLayer {
+	g.ObjLayerMutex.RLock()
+	defer g.ObjLayerMutex.RUnlock()
+	return g.ObjectAPI
+}
+
+func (g *Globals) setObjectLayer(o ObjectLayer) {
+	g.ObjLayerMutex.Lock()
+	g.ObjectAPI = o
+	g.ObjLayerMutex.Unlock()
+}
+
+func (g *Globals) setHTTPServer(server *xhttp.Server) {
+	g.ObjLayerMutex.Lock()
+	g.HTTPServer = server
+	g.ObjLayerMutex.Unlock()
+}
+
+func (g *Globals) getHTTPServer() *xhttp.Server {
+	g.ObjLayerMutex.RLock()
+	defer g.ObjLayerMutex.RUnlock()
+	return g.HTTPServer
+}
+
 var (
-	// Indicates if the running minio is in gateway mode.
-	globalIsGateway = false
-
-	// Name of gateway server, e.g S3, GCS, Azure, etc
-	globalGatewayName = ""
-
-	// This flag is set to 'true' by default
-	globalBrowserEnabled = false
-
-	// This flag is set to 'us-east-1' by default
-	globalServerRegion = globalMinioDefaultRegion
-
-	// MinIO local server address (in `host:port` format)
-	globalMinioAddr = ""
-	// MinIO default port, can be changed through command line.
-	globalMinioPort = GlobalMinioDefaultPort
-	// Holds the host that was passed using --address
-	globalMinioHost = ""
-	// Holds the possible host endpoint.
-	globalMinioEndpoint = ""
-
-	// globalConfigSys server config system.
-	globalConfigSys *ConfigSys
-
-	globalNotificationSys  *NotificationSys
-	globalConfigTargetList *event.TargetList
-	// globalEnvTargetList has list of targets configured via env.
-	globalEnvTargetList *event.TargetList
-
-	globalBucketMetadataSys *BucketMetadataSys
-	globalBucketMonitor     *bandwidth.Monitor
-	globalPolicySys         *PolicySys
-	globalIAMSys            *IAMSys
-
-	globalBucketSSEConfigSys *BucketSSEConfigSys
-	globalBucketTargetSys    *BucketTargetSys
-	// globalAPIConfig controls S3 API requests throttling,
-	// healthcheck readiness deadlines and cors settings.
-	globalAPIConfig = apiConfig{listQuorum: 3}
-
-	globalOpenIDConfig openid.Config
-
-	// CA root certificates, a nil value means system certs pool will be used
-	globalRootCAs *x509.CertPool
-
-	// IsSSL indicates if the server is configured with SSL.
-	globalIsTLS bool
-
-	globalTLSCerts *certs.Manager
-
-	globalHTTPServer        *xhttp.Server
-	globalHTTPServerErrorCh = make(chan error)
-	globalOSSignalCh        = make(chan os.Signal, 1)
-
 	// global Trace system to send HTTP request/response
 	// and Storage/OS calls info to registered listeners.
 	globalTrace = pubsub.New()
-
-	// global Listen system to send S3 API events to registered listeners
-	globalHTTPListen = pubsub.New()
-
-	// global console system to send console logs to
-	// registered listeners
-	globalConsoleSys *HTTPConsoleLoggerSys
-
-	globalEndpoints EndpointServerPools
-
-	// The name of this local node, fetched from arguments
-	globalLocalNodeName string
-
-	// Global server's network statistics
-	globalConnStats = newConnStats()
-
-	// Global HTTP request statisitics
-	globalHTTPStats = newHTTPStats()
-
-	// Time when the server is started
-	globalBootTime = UTCNow()
-
-	globalActiveCred auth.Credentials
-
-	// Hold the old server credentials passed by the environment
-	globalOldCred auth.Credentials
-
-	// Indicates if config is to be encrypted
-	globalConfigEncrypted bool
-
-	globalPublicCerts []*x509.Certificate
-
-	globalDomainNames []string // Root domains for virtual host style requests
-
-	globalOperationTimeout = newDynamicTimeout(10*time.Minute, 5*time.Minute) // default timeout for general ops
-
-	globalBucketObjectLockSys *BucketObjectLockSys
-	globalBucketQuotaSys      *BucketQuotaSys
-	globalBucketVersioningSys *BucketVersioningSys
-
-	// Allocated DNS config wrapper over etcd client.
-	globalDNSConfig interface{}
-
-	// Is compression enabled?
-	globalCompressConfigMu sync.Mutex
-	globalCompressConfig   compress.Config
-
-	// Some standard object extensions which we strictly dis-allow for compression.
-	standardExcludeCompressExtensions = []string{".gz", ".bz2", ".rar", ".zip", ".7z", ".xz", ".mp4", ".mkv", ".mov", ".jpg", ".png", ".gif"}
-
-	// Some standard content-types which we strictly dis-allow for compression.
-	standardExcludeCompressContentTypes = []string{"video/*", "audio/*", "application/zip", "application/x-gzip", "application/x-zip-compressed", " application/x-compress", "application/x-spoon"}
-
-	// Deployment ID - unique per deployment
-	globalDeploymentID string
-
-	// If writes to FS backend should be O_SYNC.
-	globalFSOSync bool
-
-	globalDNSCache *xhttp.DNSCache
 )
 
 var errSelfTestFailure = errors.New("self test failed. unsafe to start server")
+
+func (g *Globals) getAPIEndpoints() (apiEndpoints []string) {
+	var ipList []string
+	if g.MinioHost == "" {
+		ipList = sortIPs(mustGetLocalIP4().ToSlice())
+		ipList = append(ipList, mustGetLocalIP6().ToSlice()...)
+	} else {
+		ipList = []string{g.MinioHost}
+	}
+
+	for _, ip := range ipList {
+		endpoint := fmt.Sprintf("%s://%s", getURLScheme(g.IsTLS), net.JoinHostPort(ip, g.MinioPort))
+		apiEndpoints = append(apiEndpoints, endpoint)
+	}
+
+	return apiEndpoints
+}
+
+// Prints the formatted startup message.
+func (g *Globals) printGatewayStartupMessage(backendType string) {
+	strippedAPIEndpoints := stripStandardPorts(g.getAPIEndpoints(), g.MinioHost)
+
+	// Prints credential.
+	printGatewayCommonMsg(g, strippedAPIEndpoints)
+
+	// Prints `mc` cli configuration message chooses
+	// first endpoint as default.
+	printCLIAccessMsg(g, strippedAPIEndpoints[0], fmt.Sprintf("my%s", backendType))
+
+	// Prints documentation message.
+	printObjectAPIMsg()
+
+	// SSL is configured reads certification chain, prints
+	// authority and expiry.
+	if color.IsTerminal() && !g.CliContext.Anonymous {
+		if g.IsTLS {
+			printCertificateMsg(g.PublicCerts)
+		}
+	}
+}
+
+// Prints the formatted startup message.
+func (g *Globals) printStartupMessage(err error) {
+	if err != nil {
+		logStartupMessage(color.RedBold("Server startup failed with '%v'", err))
+		logStartupMessage(color.RedBold("Not all features may be available on this server"))
+		logStartupMessage(color.RedBold("Please use 'mc admin' commands to further investigate this issue"))
+	}
+
+	strippedAPIEndpoints := stripStandardPorts(g.getAPIEndpoints(), g.MinioHost)
+
+	// Object layer is initialized then print StorageInfo.
+	objAPI := g.newObjectLayerFn()
+	if objAPI != nil {
+		printStorageInfo(g, mustGetStorageInfo(objAPI))
+	}
+
+	// Prints credential, region and browser access.
+	printServerCommonMsg(g, strippedAPIEndpoints)
+
+	// Prints `mc` cli configuration message chooses
+	// first endpoint as default.
+	printCLIAccessMsg(g, strippedAPIEndpoints[0], "myminio")
+
+	// Prints documentation message.
+	printObjectAPIMsg()
+
+	// SSL is configured reads certification chain, prints
+	// authority and expiry.
+	if color.IsTerminal() && !g.CliContext.Anonymous {
+		if g.IsTLS {
+			printCertificateMsg(g.PublicCerts)
+		}
+	}
+}

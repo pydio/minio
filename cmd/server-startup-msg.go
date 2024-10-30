@@ -23,8 +23,6 @@ import (
 	"runtime"
 	"strings"
 
-	humanize "github.com/dustin/go-humanize"
-
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/logger"
 	color "github.com/minio/minio/pkg/color"
@@ -52,41 +50,6 @@ func mustGetStorageInfo(objAPI ObjectLayer) StorageInfo {
 	return storageInfo
 }
 
-// Prints the formatted startup message.
-func printStartupMessage(apiEndpoints []string, err error) {
-	if err != nil {
-		logStartupMessage(color.RedBold("Server startup failed with '%v'", err))
-		logStartupMessage(color.RedBold("Not all features may be available on this server"))
-		logStartupMessage(color.RedBold("Please use 'mc admin' commands to further investigate this issue"))
-	}
-
-	strippedAPIEndpoints := stripStandardPorts(apiEndpoints)
-
-	// Object layer is initialized then print StorageInfo.
-	objAPI := newObjectLayerFn()
-	if objAPI != nil {
-		printStorageInfo(mustGetStorageInfo(objAPI))
-	}
-
-	// Prints credential, region and browser access.
-	printServerCommonMsg(strippedAPIEndpoints)
-
-	// Prints `mc` cli configuration message chooses
-	// first endpoint as default.
-	printCLIAccessMsg(strippedAPIEndpoints[0], "myminio")
-
-	// Prints documentation message.
-	printObjectAPIMsg()
-
-	// SSL is configured reads certification chain, prints
-	// authority and expiry.
-	if color.IsTerminal() && !globalCLIContext.Anonymous {
-		if globalIsTLS {
-			printCertificateMsg(globalPublicCerts)
-		}
-	}
-}
-
 // Returns true if input is not IPv4, false if it is.
 func isNotIPv4(host string) bool {
 	h, _, err := net.SplitHostPort(host)
@@ -103,7 +66,7 @@ func isNotIPv4(host string) bool {
 // strip api endpoints list with standard ports such as
 // port "80" and "443" before displaying on the startup
 // banner.  Returns a new list of API endpoints.
-func stripStandardPorts(apiEndpoints []string) (newAPIEndpoints []string) {
+func stripStandardPorts(apiEndpoints []string, minioHost string) (newAPIEndpoints []string) {
 	newAPIEndpoints = make([]string, len(apiEndpoints))
 	// Check all API endpoints for standard ports and strip them.
 	for i, apiEndpoint := range apiEndpoints {
@@ -111,7 +74,7 @@ func stripStandardPorts(apiEndpoints []string) (newAPIEndpoints []string) {
 		if err != nil {
 			continue
 		}
-		if globalMinioHost == "" && isNotIPv4(u.Host) {
+		if minioHost == "" && isNotIPv4(u.Host) {
 			// Skip all non-IPv4 endpoints when we bind to all interfaces.
 			continue
 		}
@@ -121,59 +84,34 @@ func stripStandardPorts(apiEndpoints []string) (newAPIEndpoints []string) {
 }
 
 // Prints common server startup message. Prints credential, region and browser access.
-func printServerCommonMsg(apiEndpoints []string) {
+func printServerCommonMsg(globals *Globals, apiEndpoints []string) {
 	// Get saved credentials.
-	cred := globalActiveCred
+	cred := globals.ActiveCred
 
 	// Get saved region.
-	region := globalServerRegion
+	region := globals.ServerRegion
 
 	apiEndpointStr := strings.Join(apiEndpoints, "  ")
 
 	// Colorize the message and print.
 	logStartupMessage(color.Blue("Endpoint: ") + color.Bold(fmt.Sprintf("%s ", apiEndpointStr)))
-	if color.IsTerminal() && !globalCLIContext.Anonymous {
+	if color.IsTerminal() && !globals.CliContext.Anonymous {
 		logStartupMessage(color.Blue("RootUser: ") + color.Bold(fmt.Sprintf("%s ", cred.AccessKey)))
 		logStartupMessage(color.Blue("RootPass: ") + color.Bold(fmt.Sprintf("%s ", cred.SecretKey)))
 		if region != "" {
 			logStartupMessage(color.Blue("Region: ") + color.Bold(fmt.Sprintf(getFormatStr(len(region), 2), region)))
 		}
 	}
-	printEventNotifiers()
-
-	if globalBrowserEnabled {
-		logStartupMessage(color.Blue("\nBrowser Access:"))
-		logStartupMessage(fmt.Sprintf(getFormatStr(len(apiEndpointStr), 3), apiEndpointStr))
-	}
-}
-
-// Prints bucket notification configurations.
-func printEventNotifiers() {
-	if globalNotificationSys == nil {
-		return
-	}
-
-	arns := globalNotificationSys.GetARNList(true)
-	if len(arns) == 0 {
-		return
-	}
-
-	arnMsg := color.Blue("SQS ARNs: ")
-	for _, arn := range arns {
-		arnMsg += color.Bold(fmt.Sprintf("%s ", arn))
-	}
-
-	logStartupMessage(arnMsg)
 }
 
 // Prints startup message for command line access. Prints link to our documentation
 // and custom platform specific message.
-func printCLIAccessMsg(endPoint string, alias string) {
+func printCLIAccessMsg(globals *Globals, endPoint string, alias string) {
 	// Get saved credentials.
-	cred := globalActiveCred
+	cred := globals.ActiveCred
 
 	// Configure 'mc', following block prints platform specific information for minio client.
-	if color.IsTerminal() && !globalCLIContext.Anonymous {
+	if color.IsTerminal() && !globals.CliContext.Anonymous {
 		logStartupMessage(color.Blue("\nCommand-line Access: ") + mcQuickStartGuide)
 		if runtime.GOOS == globalWindowsOSName {
 			mcMessage := fmt.Sprintf("$ mc.exe alias set %s %s %s %s", alias,
@@ -203,20 +141,13 @@ func getStorageInfoMsg(storageInfo StorageInfo) string {
 }
 
 // Prints startup message of storage capacity and erasure information.
-func printStorageInfo(storageInfo StorageInfo) {
+func printStorageInfo(globals *Globals, storageInfo StorageInfo) {
 	if msg := getStorageInfoMsg(storageInfo); msg != "" {
-		if globalCLIContext.Quiet {
+		if globals.CliContext.Quiet {
 			logger.Info(msg)
 		}
 		logStartupMessage(msg)
 	}
-}
-
-func printCacheStorageInfo(storageInfo CacheStorageInfo) {
-	msg := fmt.Sprintf("%s %s Free, %s Total", color.Blue("Cache Capacity:"),
-		humanize.IBytes(storageInfo.Free),
-		humanize.IBytes(storageInfo.Total))
-	logStartupMessage(msg)
 }
 
 // Prints the certificate expiry message.

@@ -27,9 +27,9 @@ import (
 	"github.com/minio/minio/pkg/madmin"
 )
 
-func handleEncryptedConfigBackend(objAPI ObjectLayer) error {
+func (gl *Globals) handleEncryptedConfigBackend(objAPI ObjectLayer) error {
 
-	encrypted, err := checkBackendEncrypted(objAPI)
+	encrypted, err := gl.checkBackendEncrypted(objAPI)
 	if err != nil {
 		return fmt.Errorf("Unable to encrypt config %w", err)
 	}
@@ -37,23 +37,23 @@ func handleEncryptedConfigBackend(objAPI ObjectLayer) error {
 	if encrypted {
 		// backend is encrypted, but credentials are not specified
 		// we shall fail right here. if not proceed forward.
-		if !globalConfigEncrypted || !globalActiveCred.IsValid() {
+		if !gl.ConfigEncrypted || !gl.ActiveCred.IsValid() {
 			return config.ErrMissingCredentialsBackendEncrypted(nil)
 		}
 	} else {
 		// backend is not yet encrypted, check if encryption of
 		// backend is requested if not return nil and proceed
 		// forward.
-		if !globalConfigEncrypted {
+		if !gl.ConfigEncrypted {
 			return nil
 		}
-		if !globalActiveCred.IsValid() {
+		if !gl.ActiveCred.IsValid() {
 			return config.ErrMissingCredentialsBackendEncrypted(nil)
 		}
 	}
 
 	// Migrate IAM configuration
-	if err = migrateConfigPrefixToEncrypted(objAPI, globalOldCred, encrypted); err != nil {
+	if err = gl.migrateConfigPrefixToEncrypted(objAPI, gl.OldCred, encrypted); err != nil {
 		return fmt.Errorf("Unable to migrate all config at .minio.sys/config/: %w", err)
 	}
 
@@ -69,8 +69,8 @@ var (
 	backendEncryptedMigrationComplete   = []byte("encrypted")
 )
 
-func checkBackendEncrypted(objAPI ObjectLayer) (bool, error) {
-	data, err := readConfig(GlobalContext, objAPI, backendEncryptedFile)
+func (gl *Globals) checkBackendEncrypted(objAPI ObjectLayer) (bool, error) {
+	data, err := gl.readConfig(GlobalContext, objAPI, backendEncryptedFile)
 	if err != nil && err != errConfigNotFound {
 		return false, err
 	}
@@ -78,7 +78,7 @@ func checkBackendEncrypted(objAPI ObjectLayer) (bool, error) {
 }
 
 // decryptData - decrypts input data with more that one credentials,
-func decryptData(edata []byte, creds ...auth.Credentials) ([]byte, error) {
+func (gl *Globals) decryptData(edata []byte, creds ...auth.Credentials) ([]byte, error) {
 	var err error
 	var data []byte
 	for _, cred := range creds {
@@ -94,7 +94,7 @@ func decryptData(edata []byte, creds ...auth.Credentials) ([]byte, error) {
 	return data, err
 }
 
-func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Credentials, encrypted bool) error {
+func (gl *Globals) migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Credentials, encrypted bool) error {
 	if encrypted {
 		// No key rotation requested, and backend is
 		// already encrypted. We proceed without migration.
@@ -103,7 +103,7 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 		}
 
 		// No real reason to rotate if old and new creds are same.
-		if activeCredOld.Equal(globalActiveCred) {
+		if activeCredOld.Equal(gl.ActiveCred) {
 			return nil
 		}
 		logger.Info("Attempting rotation of encrypted config, IAM users and policies on MinIO with newly supplied credentials")
@@ -111,7 +111,7 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 		logger.Info("Attempting encryption of all config, IAM users and policies on MinIO backend")
 	}
 
-	err := saveConfig(GlobalContext, objAPI, backendEncryptedFile, backendEncryptedMigrationIncomplete)
+	err := gl.saveConfig(GlobalContext, objAPI, backendEncryptedFile, backendEncryptedMigrationIncomplete)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 				cencdata []byte
 			)
 
-			cdata, err = readConfig(GlobalContext, objAPI, obj.Name)
+			cdata, err = gl.readConfig(GlobalContext, objAPI, obj.Name)
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 			var data []byte
 			// Is rotating of creds requested?
 			if activeCredOld.IsValid() {
-				data, err = decryptData(cdata, activeCredOld, globalActiveCred)
+				data, err = gl.decryptData(cdata, activeCredOld, gl.ActiveCred)
 				if err != nil {
 					if err == madmin.ErrMaliciousData {
 						return config.ErrInvalidRotatingCredentialsBackendEncrypted(nil)
@@ -149,7 +149,7 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 			}
 
 			if !utf8.Valid(data) {
-				_, err = decryptData(data, globalActiveCred)
+				_, err = gl.decryptData(data, gl.ActiveCred)
 				if err == nil {
 					// Config is already encrypted with right keys
 					continue
@@ -157,12 +157,12 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 				return fmt.Errorf("Decrypting config failed %w, possibly credentials are incorrect", err)
 			}
 
-			cencdata, err = madmin.EncryptData(globalActiveCred.String(), data)
+			cencdata, err = madmin.EncryptData(gl.ActiveCred.String(), data)
 			if err != nil {
 				return err
 			}
 
-			if err = saveConfig(GlobalContext, objAPI, obj.Name, cencdata); err != nil {
+			if err = gl.saveConfig(GlobalContext, objAPI, obj.Name, cencdata); err != nil {
 				return err
 			}
 		}
@@ -174,9 +174,9 @@ func migrateConfigPrefixToEncrypted(objAPI ObjectLayer, activeCredOld auth.Crede
 		marker = res.NextMarker
 	}
 
-	if encrypted && globalActiveCred.IsValid() && activeCredOld.IsValid() {
+	if encrypted && gl.ActiveCred.IsValid() && activeCredOld.IsValid() {
 		logger.Info("Rotation complete, please make sure to unset MINIO_ROOT_USER_OLD and MINIO_ROOT_PASSWORD_OLD envs")
 	}
 
-	return saveConfig(GlobalContext, objAPI, backendEncryptedFile, backendEncryptedMigrationComplete)
+	return gl.saveConfig(GlobalContext, objAPI, backendEncryptedFile, backendEncryptedMigrationComplete)
 }

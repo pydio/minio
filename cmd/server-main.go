@@ -108,94 +108,86 @@ func serverCmdArgs(ctx *cli.Context) []string {
 	return strings.Fields(v)
 }
 
-func serverHandleCmdArgs(ctx *cli.Context) {
+func serverHandleCmdArgs(ctx *cli.Context, globals *Globals) {
 	// Handle common command args.
-	handleCommonCmdArgs(ctx)
+	cliCtx := handleCommonCmdArgs(ctx)
+	globals.CliContext = cliCtx
 
-	logger.FatalIf(CheckLocalServerAddr(globalCLIContext.Addr), "Unable to validate passed arguments")
+	logger.FatalIf(CheckLocalServerAddr(cliCtx.Addr), "Unable to validate passed arguments")
 
 	var err error
 
 	// Check and load TLS certificates.
-	globalPublicCerts, globalTLSCerts, globalIsTLS, err = getTLSConfig()
+	globals.PublicCerts, globals.TLSCerts, globals.IsTLS, err = globals.getTLSConfig()
 	logger.FatalIf(err, "Unable to load the TLS configuration")
 
 	// Check and load Root CAs.
-	globalRootCAs, err = certs.GetRootCAs(globalCertsCADir.Get())
+	globals.RootCAs, err = certs.GetRootCAs(cliCtx.CertsCADir.Get())
 	logger.FatalIf(err, "Failed to read root CAs (%v)", err)
 
 	// Add the global public crts as part of global root CAs
-	for _, publicCrt := range globalPublicCerts {
-		globalRootCAs.AddCert(publicCrt)
+	for _, publicCrt := range globals.PublicCerts {
+		globals.RootCAs.AddCert(publicCrt)
 	}
 
 	// Register root CAs for remote ENVs
-	env.RegisterGlobalCAs(globalRootCAs)
+	env.RegisterGlobalCAs(globals.RootCAs)
 
-	globalMinioAddr = globalCLIContext.Addr
+	globals.MinioAddr = cliCtx.Addr
 
-	globalMinioHost, globalMinioPort = mustSplitHostPort(globalMinioAddr)
-	globalEndpoints, _, err = createServerEndpoints(globalCLIContext.Addr, serverCmdArgs(ctx)...)
+	globals.MinioHost, globals.MinioPort = mustSplitHostPort(globals.MinioAddr)
+	globals.Endpoints, _, err = createServerEndpoints(cliCtx.Addr, globals.MinioPort, serverCmdArgs(ctx)...)
 	logger.FatalIf(err, "Invalid command line arguments")
 
-	globalLocalNodeName = GetLocalPeer(globalEndpoints, globalMinioHost, globalMinioPort)
+	globals.LocalNodeName = GetLocalPeer(globals.Endpoints, globals.MinioHost, globals.MinioPort)
 
 	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
 	// to IPv6 address ie minio will start listening on IPv6 address whereas another
 	// (non-)minio process is listening on IPv4 of given port.
 	// To avoid this error situation we check for port availability.
-	logger.FatalIf(checkPortAvailability(globalMinioHost, globalMinioPort), "Unable to start the server")
+	logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the server")
 
 }
 
-func serverHandleEnvVars() {
-	// Handle common environment variables.
-	handleCommonEnvVars()
-}
-
-func newAllSubsystems() {
+func newAllSubsystems(globals *Globals) {
 
 	// Create new notification system and initialize notification targets
-	globalNotificationSys = NewNotificationSys(globalEndpoints)
+	globals.NotificationSys = NewNotificationSys(globals)
 
 	// Create new bucket metadata system.
-	if globalBucketMetadataSys == nil {
-		globalBucketMetadataSys = NewBucketMetadataSys()
-	} else {
-		// Reinitialize safely when testing.
-		globalBucketMetadataSys.Reset()
-	}
+	globals.BucketMetadataSys = NewBucketMetadataSys(globals)
 
 	// Create the bucket bandwidth monitor
-	globalBucketMonitor = bandwidth.NewMonitor(GlobalServiceDoneCh)
+	globals.BucketMonitor = bandwidth.NewMonitor(GlobalServiceDoneCh)
 
 	// Create a new config system.
-	globalConfigSys = NewConfigSys()
+	globals.ConfigSys = NewConfigSys(globals)
 
 	// Create new IAM system.
-	globalIAMSys = NewIAMSys()
+	globals.IAMSys = NewIAMSys(globals)
 
 	// Create new policy system.
-	globalPolicySys = NewPolicySys()
+	globals.PolicySys = NewPolicySys(globals)
 
 	// Create new bucket encryption subsystem
-	globalBucketSSEConfigSys = NewBucketSSEConfigSys()
+	globals.BucketSSEConfigSys = NewBucketSSEConfigSys(globals)
 
 	// Create new bucket object lock subsystem
-	globalBucketObjectLockSys = NewBucketObjectLockSys()
+	globals.BucketObjectLockSys = NewBucketObjectLockSys(globals)
 
 	// Create new bucket quota subsystem
-	globalBucketQuotaSys = NewBucketQuotaSys()
+	globals.BucketQuotaSys = NewBucketQuotaSys(globals)
 
 	// Create new bucket versioning subsystem
-	if globalBucketVersioningSys == nil {
-		globalBucketVersioningSys = NewBucketVersioningSys()
+	if globals.BucketVersioningSys == nil {
+		globals.BucketVersioningSys = NewBucketVersioningSys(globals)
 	} else {
-		globalBucketVersioningSys.Reset()
+		globals.BucketVersioningSys.Reset()
 	}
 
 	// Create new bucket replication subsytem
-	globalBucketTargetSys = NewBucketTargetSys()
+	globals.BucketTargetSys = NewBucketTargetSys(globals)
+
 }
 
 func configRetriableErrors(err error) bool {
@@ -210,9 +202,9 @@ func configRetriableErrors(err error) bool {
 		errors.Is(err, os.ErrDeadlineExceeded)
 }
 
-func initServer(ctx context.Context, newObject ObjectLayer) error {
+func initServer(ctx context.Context, globals *Globals, newObject ObjectLayer) error {
 	// Once the config is fully loaded, initialize the new object layer.
-	setObjectLayer(newObject)
+	globals.setObjectLayer(newObject)
 
 	// Make sure to hold lock for entire migration to avoid
 	// such that only one server should migrate the entire config
@@ -250,10 +242,10 @@ func initServer(ctx context.Context, newObject ObjectLayer) error {
 		// Migrate all backend configs to encrypted backend configs, optionally
 		// handles rotating keys for encryption, if there is any retriable failure
 		// that shall be retried if there is an error.
-		if err = handleEncryptedConfigBackend(newObject); err == nil {
+		if err = globals.handleEncryptedConfigBackend(newObject); err == nil {
 			// Upon success migrating the config, initialize all sub-systems
 			// if all sub-systems initialized successfully return right away
-			if err = initAllSubsystems(ctx, newObject); err == nil {
+			if err = initAllSubsystems(ctx, globals, newObject); err == nil {
 				txnLk.Unlock()
 				return nil
 			}
@@ -272,7 +264,7 @@ func initServer(ctx context.Context, newObject ObjectLayer) error {
 	}
 }
 
-func initAllSubsystems(ctx context.Context, newObject ObjectLayer) (err error) {
+func initAllSubsystems(ctx context.Context, globals *Globals, newObject ObjectLayer) (err error) {
 	// %w is used by all error returns here to make sure
 	// we wrap the underlying error, make sure when you
 	// are modifying this code that you do so, if and when
@@ -286,7 +278,7 @@ func initAllSubsystems(ctx context.Context, newObject ObjectLayer) (err error) {
 	}
 
 	// Initialize config system.
-	if err = globalConfigSys.Init(newObject); err != nil {
+	if err = globals.ConfigSys.Init(newObject); err != nil {
 		if configRetriableErrors(err) {
 			return fmt.Errorf("Unable to initialize config system: %w", err)
 		}
@@ -294,41 +286,34 @@ func initAllSubsystems(ctx context.Context, newObject ObjectLayer) (err error) {
 		logger.LogIf(ctx, fmt.Errorf("Unable to initialize config, some features may be missing %w", err))
 	}
 
-	// Populate existing buckets to the etcd backend
-	/*
-		if globalDNSConfig != nil {
-			// Background this operation.
-			go initFederatorBackend(buckets, newObject)
-		}
-	*/
-
 	// Initialize bucket metadata sub-system.
-	globalBucketMetadataSys.Init(ctx, buckets, newObject)
+	if er := globals.BucketMetadataSys.Init(ctx, buckets, newObject); er != nil {
+		return er
+	}
 
 	// Initialize notification system.
-	globalNotificationSys.Init(ctx, buckets, newObject)
+	if er := globals.NotificationSys.Init(ctx, buckets, newObject); er != nil {
+		return er
+	}
 
 	// Initialize bucket targets sub-system.
-	globalBucketTargetSys.Init(ctx, buckets, newObject)
+	if er := globals.BucketTargetSys.Init(ctx, buckets, newObject); er != nil {
+		return er
+	}
 
 	return nil
 }
 
 // serverMain handler called for 'minio server' command.
 func serverMain(ctx *cli.Context) {
-	globals := &Globals{}
-	defer globalDNSCache.Stop()
+	globals := NewGlobals()
 	defer globals.DNSCache.Stop()
 
-	signal.Notify(globalOSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
+	signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
-	go handleSignals()
+	go handleSignals(globals)
 
 	setDefaultProfilerRates()
-
-	// Initialize globalConsoleSys system
-	globalConsoleSys = NewConsoleLogger(GlobalContext)
-	logger.AddTarget(globalConsoleSys)
 
 	// Perform any self-tests
 	bitrotSelfTest()
@@ -336,26 +321,26 @@ func serverMain(ctx *cli.Context) {
 	compressSelfTest()
 
 	// Handle all server command args.
-	serverHandleCmdArgs(ctx)
+	serverHandleCmdArgs(ctx, globals)
 
-	// Handle all server environment vars.
-	serverHandleEnvVars()
+	// Handle common environment variables.
+	handleCommonEnvVars(globals)
 
 	// Set node name, only set for distributed setup.
-	globalConsoleSys.SetNodeName(globalLocalNodeName)
+	//globalConsoleSys.SetNodeName(globals.LocalNodeName)
 
 	// Initialize all help
 	initHelp()
 
 	// Initialize all sub-systems
-	newAllSubsystems()
+	newAllSubsystems(globals)
 
-	globalMinioEndpoint = func() string {
-		host := globalMinioHost
+	globals.MinioEndpoint = func() string {
+		host := globals.MinioHost
 		if host == "" {
 			host = sortIPs(localIP4.ToSlice())[0]
 		}
-		return fmt.Sprintf("%s://%s", getURLScheme(globalIsTLS), net.JoinHostPort(host, globalMinioPort))
+		return fmt.Sprintf("%s://%s", getURLScheme(globals.IsTLS), net.JoinHostPort(host, globals.MinioPort))
 	}()
 
 	// Set system resources to maximum.
@@ -366,33 +351,37 @@ func serverMain(ctx *cli.Context) {
 	// normalizing URL path minio/minio#3256
 	router := mux.NewRouter().SkipClean(true).UseEncodedPath()
 	registerAPIRouter(globals, router)
-	router.Use(globalHandlers...)
+
+	//hh := append(globalHandlers, injectGlobalsHandler(globals))
+	hh := append([]mux.MiddlewareFunc{injectGlobalsHandler(globals)}, globalHandlers...)
+	router.Use(hh...)
 
 	var getCert certs.GetCertificateFunc
-	if globalTLSCerts != nil {
-		getCert = globalTLSCerts.GetCertificate
+	if globals.TLSCerts != nil {
+		getCert = globals.TLSCerts.GetCertificate
 	}
 
-	httpServer := xhttp.NewServer([]string{globalMinioAddr}, criticalErrorHandler{corsHandler(router)}, getCert)
+	httpServer := xhttp.NewServer([]string{globals.MinioAddr}, criticalErrorHandler{globals.corsHandler(router)}, getCert)
 	httpServer.BaseContext = func(listener net.Listener) context.Context {
 		return GlobalContext
 	}
 	go func() {
-		globalHTTPServerErrorCh <- httpServer.Start()
+		globals.HTTPServerErrorCh <- httpServer.Start()
 	}()
 
-	setHTTPServer(httpServer)
+	globals.setHTTPServer(httpServer)
+	//setHTTPServer(httpServer)
 
-	newObject, err := newObjectLayer(GlobalContext, globalEndpoints)
+	newObject, err := NewFSObjectLayer(globals, globals.Endpoints[0].Endpoints[0].Path)
 	if err != nil {
 		logFatalErrs(err, Endpoint{}, true)
 	}
 
-	logger.SetDeploymentID(globalDeploymentID)
+	logger.SetDeploymentID(globals.DeploymentID)
 
-	initDataScanner(GlobalContext, newObject)
+	initDataScanner(GlobalContext, globals, newObject)
 
-	if err = initServer(GlobalContext, newObject); err != nil {
+	if err = initServer(GlobalContext, globals, newObject); err != nil {
 		var cerr config.Err
 		// For any config error, we don't need to drop into safe-mode
 		// instead its a user error and should be fixed by user.
@@ -407,22 +396,15 @@ func serverMain(ctx *cli.Context) {
 	}
 
 	// Initialize users credentials and policies in background right after config has initialized.
-	go globalIAMSys.Init(GlobalContext, newObject)
+	go globals.IAMSys.Init(GlobalContext, newObject)
 
 	// Prints the formatted startup message, if err is not nil then it prints additional information as well.
-	printStartupMessage(getAPIEndpoints(), err)
+	globals.printStartupMessage(err)
 
-	if globalActiveCred.Equal(auth.DefaultCredentials) {
-		msg := fmt.Sprintf("Detected default credentials '%s', please change the credentials immediately using 'MINIO_ROOT_USER' and 'MINIO_ROOT_PASSWORD'", globalActiveCred)
+	if globals.ActiveCred.Equal(auth.DefaultCredentials) {
+		msg := fmt.Sprintf("Detected default credentials '%s', please change the credentials immediately using 'MINIO_ROOT_USER' and 'MINIO_ROOT_PASSWORD'", globals.ActiveCred)
 		logger.StartupMessage(color.RedBold(msg))
 	}
 
-	<-globalOSSignalCh
-}
-
-// Initialize object layer with the supplied disks, objectLayer is nil upon any error.
-func newObjectLayer(ctx context.Context, endpointServerPools EndpointServerPools) (newObject ObjectLayer, err error) {
-	// For FS only, directly use the disk.
-	// Initialize new FS object layer.
-	return NewFSObjectLayer(endpointServerPools[0].Endpoints[0].Path)
+	<-globals.OSSignalCh
 }

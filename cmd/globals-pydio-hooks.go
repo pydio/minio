@@ -23,10 +23,12 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"github.com/gorilla/mux"
-	"github.com/minio/minio/pkg/disk"
 	"net/http"
 	"net/url"
+
+	"github.com/gorilla/mux"
+
+	"github.com/minio/minio/pkg/disk"
 )
 
 const (
@@ -66,8 +68,9 @@ func applyHooksExtractReqParams(req *http.Request, m map[string]string) {
 }
 
 // ExposedParseSignV4 parses a v4 signature and return the signature accessKey if it's valid.
-func ExposedParseSignV4(v4auth string) (string, error) {
-	val, code := parseSignV4(v4auth, globalServerRegion, "s3")
+func ExposedParseSignV4(ctx context.Context, v4auth string) (string, error) {
+	globals := mustGlobalsFromContext(ctx)
+	val, code := parseSignV4(v4auth, globals.ServerRegion, "s3")
 	if code != ErrNone {
 		return "", fmt.Errorf("cannot parse signature - code is %d", code)
 	} else {
@@ -76,8 +79,9 @@ func ExposedParseSignV4(v4auth string) (string, error) {
 }
 
 // ExposedParsePresignV4 parses a presigned v4 signature and return the signature accessKey if it's valid.
-func ExposedParsePresignV4(query url.Values) (string, error) {
-	val, code := parsePreSignV4(query, globalServerRegion, "s3")
+func ExposedParsePresignV4(ctx context.Context, query url.Values) (string, error) {
+	globals := mustGlobalsFromContext(ctx)
+	val, code := parsePreSignV4(query, globals.ServerRegion, "s3")
 	if code != ErrNone {
 		return "", fmt.Errorf("cannot parse signature - code is %d", code)
 	} else {
@@ -87,7 +91,7 @@ func ExposedParsePresignV4(query url.Values) (string, error) {
 
 // ExposedWriteErrorResponse writes an error code in proper XML foramt
 func ExposedWriteErrorResponse(ctx context.Context, w http.ResponseWriter, code APIErrorCode, reqURL *url.URL) {
-	writeErrorResponse(ctx, w, errorCodes.ToAPIErr(code), reqURL, false)
+	writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, code), reqURL, false)
 }
 
 // ExposedDiskStats returns info about the disk

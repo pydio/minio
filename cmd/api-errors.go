@@ -370,7 +370,7 @@ const (
 
 type errorCodeMap map[APIErrorCode]APIError
 
-func (e errorCodeMap) ToAPIErrWithErr(errCode APIErrorCode, err error) APIError {
+func (e errorCodeMap) ToAPIErrWithErr(ctx context.Context, errCode APIErrorCode, err error) APIError {
 	apiErr, ok := e[errCode]
 	if !ok {
 		apiErr = e[ErrInternalError]
@@ -378,18 +378,19 @@ func (e errorCodeMap) ToAPIErrWithErr(errCode APIErrorCode, err error) APIError 
 	if err != nil {
 		apiErr.Description = fmt.Sprintf("%s (%s)", apiErr.Description, err)
 	}
-	if globalServerRegion != "" {
+
+	if globs := mustGlobalsFromContext(ctx); globs != nil && globs.ServerRegion != "" {
 		switch errCode {
 		case ErrAuthorizationHeaderMalformed:
-			apiErr.Description = fmt.Sprintf("The authorization header is malformed; the region is wrong; expecting '%s'.", globalServerRegion)
+			apiErr.Description = fmt.Sprintf("The authorization header is malformed; the region is wrong; expecting '%s'.", globs.ServerRegion)
 			return apiErr
 		}
 	}
 	return apiErr
 }
 
-func (e errorCodeMap) ToAPIErr(errCode APIErrorCode) APIError {
-	return e.ToAPIErrWithErr(errCode, nil)
+func (e errorCodeMap) ToAPIErr(ctx context.Context, errCode APIErrorCode) APIError {
+	return e.ToAPIErrWithErr(ctx, errCode, nil)
 }
 
 // error code to APIError structure, these fields carry respective
@@ -2043,8 +2044,9 @@ func toAPIError(ctx context.Context, err error) APIError {
 	if err == nil {
 		return noError
 	}
+	globals := mustGlobalsFromContext(ctx)
 
-	var apiErr = errorCodes.ToAPIErr(toAPIErrorCode(ctx, err))
+	var apiErr = errorCodes.ToAPIErr(ctx, toAPIErrorCode(ctx, err))
 	/*	e, ok := err.(dns.ErrInvalidBucketName)
 		if ok {
 			code := toAPIErrorCode(ctx, e)
@@ -2135,7 +2137,7 @@ func toAPIError(ctx context.Context, err error) APIError {
 				Description:    e.Message,
 				HTTPStatusCode: e.StatusCode,
 			}
-			if globalIsGateway && strings.Contains(e.Message, "KMS is not configured") {
+			if globals.IsGateway && strings.Contains(e.Message, "KMS is not configured") {
 				apiErr = APIError{
 					Code:           "NotImplemented",
 					Description:    e.Message,
@@ -2176,25 +2178,19 @@ func toAPIError(ctx context.Context, err error) APIError {
 	return apiErr
 }
 
-// getAPIError provides API Error for input API error code.
-func getAPIError(code APIErrorCode) APIError {
-	if apiErr, ok := errorCodes[code]; ok {
-		return apiErr
-	}
-	return errorCodes.ToAPIErr(ErrInternalError)
-}
-
 // getErrorResponse gets in standard error and resource value and
 // provides a encodable populated response values
 func getAPIErrorResponse(ctx context.Context, err APIError, resource, requestID, hostID string) APIErrorResponse {
+	globals := mustGlobalsFromContext(ctx)
 	reqInfo := logger.GetReqInfo(ctx)
+
 	return APIErrorResponse{
 		Code:       err.Code,
 		Message:    err.Description,
 		BucketName: reqInfo.BucketName,
 		Key:        reqInfo.ObjectName,
 		Resource:   resource,
-		Region:     globalServerRegion,
+		Region:     globals.ServerRegion,
 		RequestID:  requestID,
 		HostID:     hostID,
 	}

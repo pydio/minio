@@ -56,15 +56,16 @@ func parseLocationConstraint(r *http.Request) (location string, s3Error APIError
 	} // else for both err as nil or io.EOF
 	location = locationConstraint.Location
 	if location == "" {
-		location = globalServerRegion
+		globals := mustGlobalsFromContext(r.Context())
+		location = globals.ServerRegion
 	}
 	return location, ErrNone
 }
 
 // Validates input location is same as configured region
 // of MinIO server.
-func isValidLocation(location string) bool {
-	return globalServerRegion == "" || globalServerRegion == location
+func isValidLocation(serverRegion, location string) bool {
+	return serverRegion == "" || serverRegion == location
 }
 
 // Supported headers that needs to be extracted.
@@ -212,12 +213,13 @@ func getReqAccessCred(r *http.Request, region string) (cred auth.Credentials) {
 		cred, _, _ = getReqAccessKeyV2(r)
 	}
 	if cred.AccessKey == "" {
+		globals := mustGlobalsFromContext(r.Context())
 		claims, owner, _ := webRequestAuthenticate(r)
 		if owner {
-			return globalActiveCred
+			return globals.ActiveCred
 		}
 		if claims != nil {
-			cred, _ = globalIAMSys.GetUser(claims.AccessKey)
+			cred, _ = globals.IAMSys.GetUser(claims.AccessKey)
 		}
 	}
 	return cred
@@ -229,7 +231,8 @@ func extractReqParams(r *http.Request) map[string]string {
 		return nil
 	}
 
-	region := globalServerRegion
+	globals := mustGlobalsFromContext(r.Context())
+	region := globals.ServerRegion
 	cred := getReqAccessCred(r, region)
 
 	principalID := cred.AccessKey
@@ -388,14 +391,15 @@ func httpTraceHdrs(f http.HandlerFunc) http.HandlerFunc {
 
 func collectAPIStats(api string, f http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		globalHTTPStats.currentS3Requests.Inc(api)
-		defer globalHTTPStats.currentS3Requests.Dec(api)
+		globals := mustGlobalsFromContext(r.Context())
+		globals.HTTPStats.currentS3Requests.Inc(api)
+		defer globals.HTTPStats.currentS3Requests.Dec(api)
 
 		statsWriter := logger.NewResponseWriter(w)
 
 		f.ServeHTTP(statsWriter, r)
 
-		globalHTTPStats.updateStats(api, r, statsWriter)
+		globals.HTTPStats.updateStats(api, r, statsWriter)
 	}
 }
 
@@ -464,7 +468,7 @@ func methodNotAllowedHandler(api string) func(w http.ResponseWriter, r *http.Req
 			if version == "v1" {
 				desc = fmt.Sprintf("Server expects client requests with 'admin' API version '%s', found '%s', please upgrade the client to latest releases", madmin.AdminAPIVersion, version)
 			} else if version == madmin.AdminAPIVersion {
-				desc = fmt.Sprintf("This 'admin' API is not supported by server in '%s'", getMinioMode())
+				desc = fmt.Sprintf("This 'admin' API is not supported by server")
 			} else {
 				desc = fmt.Sprintf("Unexpected client 'admin' API version found '%s', expected '%s', please downgrade the client to older releases", version, madmin.AdminAPIVersion)
 			}
@@ -510,7 +514,7 @@ func errorResponseHandler(w http.ResponseWriter, r *http.Request) {
 		if version == "v1" {
 			desc = fmt.Sprintf("Server expects client requests with 'admin' API version '%s', found '%s', please upgrade the client to latest releases", madmin.AdminAPIVersion, version)
 		} else if version == madmin.AdminAPIVersion {
-			desc = fmt.Sprintf("This 'admin' API is not supported by server in '%s'", getMinioMode())
+			desc = fmt.Sprintf("This 'admin' API is not supported by server")
 		} else {
 			desc = fmt.Sprintf("Unexpected client 'admin' API version found '%s', expected '%s', please downgrade the client to older releases", version, madmin.AdminAPIVersion)
 		}

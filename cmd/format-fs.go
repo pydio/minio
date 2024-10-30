@@ -187,7 +187,7 @@ func createFormatFS(fsFormatPath string) error {
 // The file descriptor should be kept open throughout the life
 // of the process so that another minio process does not try to
 // migrate the backend when we are actively working on the backend.
-func initFormatFS(ctx context.Context, fsPath string) (rlk *lock.RLockedFile, err error) {
+func initFormatFS(ctx context.Context, globals *Globals, fsPath string) (rlk *lock.RLockedFile, err error) {
 	fsFormatPath := pathJoin(fsPath, minioMetaBucket, formatConfigFile)
 
 	// Add a deployment ID, if it does not exist.
@@ -275,7 +275,7 @@ func initFormatFS(ctx context.Context, fsPath string) (rlk *lock.RLockedFile, er
 			rlk.Close()
 			return nil, err
 		}
-		globalDeploymentID = id
+		globals.DeploymentID = id
 		return rlk, nil
 	}
 }

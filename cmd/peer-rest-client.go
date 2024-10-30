@@ -516,7 +516,7 @@ func (client *peerRESTClient) ConsoleLog(logCh chan interface{}, doneCh <-chan s
 // The two slices will point to the same clients,
 // but 'all' will contain nil entry for local client.
 // The 'all' slice will be in the same order across the cluster.
-func newPeerRestClients(endpoints EndpointServerPools) (remote, all []*peerRESTClient) {
+func newPeerRestClients() (remote, all []*peerRESTClient) {
 	return nil, nil
 }
 
@@ -534,27 +534,6 @@ func (client *peerRESTClient) MonitorBandwidth(ctx context.Context, buckets []st
 	var bandwidthReport bandwidth.Report
 	err = dec.Decode(&bandwidthReport)
 	return &bandwidthReport, err
-}
-
-func (client *peerRESTClient) GetPeerMetrics(ctx context.Context) (<-chan Metric, error) {
-	respBody, err := client.callWithContext(ctx, peerRESTMethodGetPeerMetrics, nil, nil, -1)
-	if err != nil {
-		return nil, err
-	}
-	dec := gob.NewDecoder(respBody)
-	ch := make(chan Metric)
-	go func(ch chan<- Metric) {
-		for {
-			var metric Metric
-			if err := dec.Decode(&metric); err != nil {
-				http.DrainBody(respBody)
-				close(ch)
-				return
-			}
-			ch <- metric
-		}
-	}(ch)
-	return ch, nil
 }
 
 // waitForHTTPResponse will wait for responses where keepHTTPResponseAlive

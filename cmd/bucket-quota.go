@@ -30,24 +30,25 @@ import (
 // BucketQuotaSys - map of bucket and quota configuration.
 type BucketQuotaSys struct {
 	bucketStorageCache timedValue
+	Globals            *Globals
 }
 
 // Get - Get quota configuration.
 func (sys *BucketQuotaSys) Get(bucketName string) (*madmin.BucketQuota, error) {
-	if globalIsGateway {
-		objAPI := newObjectLayerFn()
+	if sys.Globals.IsGateway {
+		objAPI := sys.Globals.newObjectLayerFn()
 		if objAPI == nil {
 			return nil, errServerNotInitialized
 		}
 		return &madmin.BucketQuota{}, nil
 	}
 
-	return globalBucketMetadataSys.GetQuotaConfig(bucketName)
+	return sys.Globals.BucketMetadataSys.GetQuotaConfig(bucketName)
 }
 
 // NewBucketQuotaSys returns initialized BucketQuotaSys
-func NewBucketQuotaSys() *BucketQuotaSys {
-	return &BucketQuotaSys{}
+func NewBucketQuotaSys(g *Globals) *BucketQuotaSys {
+	return &BucketQuotaSys{Globals: g}
 }
 
 // parseBucketQuota parses BucketQuota from json
@@ -63,7 +64,7 @@ func parseBucketQuota(bucket string, data []byte) (quotaCfg *madmin.BucketQuota,
 }
 
 func (sys *BucketQuotaSys) check(ctx context.Context, bucket string, size int64) error {
-	objAPI := newObjectLayerFn()
+	objAPI := sys.Globals.newObjectLayerFn()
 	if objAPI == nil {
 		return errServerNotInitialized
 	}
@@ -109,15 +110,15 @@ func enforceBucketQuota(ctx context.Context, bucket string, size int64) error {
 	if size < 0 {
 		return nil
 	}
-
-	return globalBucketQuotaSys.check(ctx, bucket, size)
+	globals := mustGlobalsFromContext(ctx)
+	return globals.BucketQuotaSys.check(ctx, bucket, size)
 }
 
 // enforceFIFOQuota deletes objects in FIFO order until sufficient objects
 // have been deleted so as to bring bucket usage within quota.
-func enforceFIFOQuotaBucket(ctx context.Context, objectAPI ObjectLayer, bucket string, bui madmin.BucketUsageInfo) {
+func enforceFIFOQuotaBucket(ctx context.Context, globals *Globals, objectAPI ObjectLayer, bucket string, bui madmin.BucketUsageInfo) {
 	// Check if the current bucket has quota restrictions, if not skip it
-	cfg, err := globalBucketQuotaSys.Get(bucket)
+	cfg, err := globals.BucketQuotaSys.Get(bucket)
 	if err != nil {
 		return
 	}
@@ -138,7 +139,7 @@ func enforceFIFOQuotaBucket(ctx context.Context, objectAPI ObjectLayer, bucket s
 	// Allocate new results channel to receive ObjectInfo.
 	objInfoCh := make(chan ObjectInfo)
 
-	versioned := globalBucketVersioningSys.Enabled(bucket)
+	versioned := globals.BucketVersioningSys.Enabled(bucket)
 
 	// Walk through all objects
 	if err := objectAPI.Walk(ctx, bucket, "", objInfoCh, ObjectOptions{WalkVersions: versioned}); err != nil {
@@ -156,7 +157,7 @@ func enforceFIFOQuotaBucket(ctx context.Context, objectAPI ObjectLayer, bucket s
 		return
 	}
 
-	rcfg, _ := globalBucketObjectLockSys.Get(bucket)
+	rcfg, _ := globals.BucketObjectLockSys.Get(bucket)
 	for obj := range objInfoCh {
 		if obj.DeleteMarker {
 			// Delete markers are automatically added for FIFO purge.
@@ -212,7 +213,7 @@ func enforceFIFOQuotaBucket(ctx context.Context, objectAPI ObjectLayer, bucket s
 			}
 
 			// Notify object deleted event.
-			sendEvent(eventArgs{
+			sendEvent(globals, eventArgs{
 				EventName:  event.ObjectRemovedDelete,
 				BucketName: bucket,
 				Object:     obj,

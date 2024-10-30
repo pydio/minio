@@ -30,6 +30,7 @@ import (
 	"time"
 
 	jsoniter "github.com/json-iterator/go"
+
 	"github.com/minio/minio/cmd/logger"
 	xioutil "github.com/minio/minio/pkg/ioutil"
 	"github.com/minio/minio/pkg/trie"
@@ -114,7 +115,7 @@ func (fs *FSObjects) backgroundAppend(ctx context.Context, bucket, object, uploa
 		}
 
 		partPath := pathJoin(uploadIDDir, entry)
-		err = xioutil.AppendFile(file.filePath, partPath, globalFSOSync)
+		err = xioutil.AppendFile(file.filePath, partPath, fs.FSOSync)
 		if err != nil {
 			reqInfo := logger.GetReqInfo(ctx).AppendTags("partPath", partPath)
 			reqInfo.AppendTags("filepath", file.filePath)
@@ -314,7 +315,7 @@ func (fs *FSObjects) PutObjectPart(ctx context.Context, bucket, object, uploadID
 	}
 
 	tmpPartPath := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID, uploadID+"."+mustGetUUID()+"."+strconv.Itoa(partID))
-	bytesWritten, err := fsCreateFile(ctx, tmpPartPath, data, data.Size())
+	bytesWritten, err := fsCreateFile(ctx, tmpPartPath, data, data.Size(), fs.FSOSync)
 
 	// Delete temporary part in case of failure. If
 	// PutObjectPart succeeds then there would be nothing to
@@ -700,7 +701,7 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 					GotETag:    part.ETag,
 				}
 			}
-			if err = xioutil.AppendFile(appendFilePath, pathJoin(uploadIDDir, partFile), globalFSOSync); err != nil {
+			if err = xioutil.AppendFile(appendFilePath, pathJoin(uploadIDDir, partFile), fs.FSOSync); err != nil {
 				logger.LogIf(ctx, err)
 				return oi, toObjectErr(err)
 			}
@@ -709,7 +710,7 @@ func (fs *FSObjects) CompleteMultipartUpload(ctx context.Context, bucket string,
 
 	// Hold write lock on the object.
 	destLock := fs.NewNSLock(bucket, object)
-	ctx, err = destLock.GetLock(ctx, globalOperationTimeout)
+	ctx, err = destLock.GetLock(ctx, fs.OperationTimeout)
 	if err != nil {
 		return oi, err
 	}

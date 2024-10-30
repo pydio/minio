@@ -39,7 +39,6 @@ import (
 	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/bucket/policy"
-	"github.com/minio/minio/pkg/bucket/replication"
 	"github.com/minio/minio/pkg/event"
 	"github.com/minio/minio/pkg/handlers"
 	"github.com/minio/minio/pkg/hash"
@@ -65,12 +64,12 @@ func (api objectAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r *
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetBucketLocationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -84,7 +83,7 @@ func (api objectAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r *
 	// Generate response.
 	encodedSuccessResponse := encodeResponse(LocationResponse{})
 	// Get current region.
-	region := globalServerRegion
+	region := api.ServerRegion
 	if region != globalMinioDefaultRegion {
 		encodedSuccessResponse = encodeResponse(LocationResponse{
 			Location: region,
@@ -92,7 +91,7 @@ func (api objectAPIHandlers) GetBucketLocationHandler(w http.ResponseWriter, r *
 	}
 
 	// Write success response.
-	writeSuccessResponseXML(w, encodedSuccessResponse)
+	writeSuccessResponseXML(ctx, w, encodedSuccessResponse)
 }
 
 // ListMultipartUploadsHandler - GET Bucket (List Multipart uploads)
@@ -112,30 +111,30 @@ func (api objectAPIHandlers) ListMultipartUploadsHandler(w http.ResponseWriter, 
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.ListBucketMultipartUploadsAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	prefix, keyMarker, uploadIDMarker, delimiter, maxUploads, encodingType, errCode := getBucketMultipartResources(r.URL.Query())
 	if errCode != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(errCode), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, errCode), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if maxUploads < 0 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidMaxUploads), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrInvalidMaxUploads), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if keyMarker != "" {
 		// Marker not common with prefix is not implemented.
 		if !HasPrefix(keyMarker, prefix) {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	}
@@ -150,7 +149,7 @@ func (api objectAPIHandlers) ListMultipartUploadsHandler(w http.ResponseWriter, 
 	encodedSuccessResponse := encodeResponse(response)
 
 	// write success response.
-	writeSuccessResponseXML(w, encodedSuccessResponse)
+	writeSuccessResponseXML(ctx, w, encodedSuccessResponse)
 }
 
 // ListBucketsHandler - GET Service.
@@ -164,7 +163,7 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -172,7 +171,7 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 
 	cred, owner, s3Error := checkRequestAuthTypeCredential(ctx, r, policy.ListAllMyBucketsAction, "", "")
 	if s3Error != ErrNone && s3Error != ErrAccessDenied {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -195,12 +194,12 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 
 		// err will be nil here as we already called this function
 		// earlier in this request.
-		claims, _ := getClaimsFromToken(getSessionToken(r))
+		claims, _ := getClaimsFromToken(api.ActiveCred, getSessionToken(r))
 		n := 0
 		// Use the following trick to filter in place
 		// https://github.com/golang/go/wiki/SliceTricks#filter-in-place
 		for _, bucketInfo := range bucketsInfo {
-			if globalIAMSys.IsAllowed(iampolicy.Args{
+			if api.IAMSys.IsAllowed(iampolicy.Args{
 				AccountName:     cred.AccessKey,
 				Groups:          cred.Groups,
 				Action:          iampolicy.ListBucketAction,
@@ -217,7 +216,7 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 		bucketsInfo = bucketsInfo[:n]
 		// No buckets can be filtered return access denied error.
 		if len(bucketsInfo) == 0 {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	}
@@ -227,7 +226,7 @@ func (api objectAPIHandlers) ListBucketsHandler(w http.ResponseWriter, r *http.R
 	encodedSuccessResponse := encodeResponse(response)
 
 	// Write response.
-	writeSuccessResponseXML(w, encodedSuccessResponse)
+	writeSuccessResponseXML(ctx, w, encodedSuccessResponse)
 }
 
 // DeleteMultipleObjectsHandler - deletes multiple objects.
@@ -241,21 +240,21 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Content-Md5 is requied should be set
 	// http://docs.aws.amazon.com/AmazonS3/latest/API/multiobjectdeleteapi.html
 	if _, ok := r.Header[xhttp.ContentMD5]; !ok {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentMD5), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMissingContentMD5), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Content-Length is required and should be non-zero
 	// http://docs.aws.amazon.com/AmazonS3/latest/API/multiobjectdeleteapi.html
 	if r.ContentLength <= 0 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -290,19 +289,18 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 
 	// Return Malformed XML as S3 spec if the list of objects is empty
 	if len(deleteObjects.Objects) == 0 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMalformedXML), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMalformedXML), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	var objectsToDelete = map[ObjectToDelete]int{}
 	getObjectInfoFn := objectAPI.GetObjectInfo
 	var (
-		hasLockEnabled, replicateSync bool
-		goi                           ObjectInfo
-		gerr                          error
+		hasLockEnabled bool
+		goi            ObjectInfo
+		gerr           error
 	)
-	replicateDeletes := hasReplicationRules(ctx, bucket, deleteObjects.Objects)
-	if rcfg, _ := globalBucketObjectLockSys.Get(bucket); rcfg.LockEnabled {
+	if rcfg, _ := api.BucketObjectLockSys.Get(bucket); rcfg.LockEnabled {
 		hasLockEnabled = true
 	}
 
@@ -310,10 +308,10 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 	for index, object := range deleteObjects.Objects {
 		if apiErrCode := checkRequestAuthType(ctx, r, policy.DeleteObjectAction, bucket, object.ObjectName); apiErrCode != ErrNone {
 			if apiErrCode == ErrSignatureDoesNotMatch || apiErrCode == ErrInvalidAccessKeyID {
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(apiErrCode), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, apiErrCode), r.URL, guessIsBrowserReq(r))
 				return
 			}
-			apiErr := errorCodes.ToAPIErr(apiErrCode)
+			apiErr := errorCodes.ToAPIErr(ctx, apiErrCode)
 			dErrs[index] = DeleteError{
 				Code:      apiErr.Code,
 				Message:   apiErr.Description,
@@ -325,7 +323,7 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 		if object.VersionID != "" && object.VersionID != nullVersionID {
 			if _, err := uuid.Parse(object.VersionID); err != nil {
 				logger.LogIf(ctx, fmt.Errorf("invalid version-id specified %w", err))
-				apiErr := errorCodes.ToAPIErr(ErrNoSuchVersion)
+				apiErr := errorCodes.ToAPIErr(ctx, ErrNoSuchVersion)
 				dErrs[index] = DeleteError{
 					Code:      apiErr.Code,
 					Message:   apiErr.Description,
@@ -336,36 +334,15 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 			}
 		}
 
-		if replicateDeletes || hasLockEnabled {
+		if hasLockEnabled {
 			goi, gerr = getObjectInfoFn(ctx, bucket, object.ObjectName, ObjectOptions{
 				VersionID: object.VersionID,
 			})
 		}
-		if replicateDeletes {
-			replicate, repsync := checkReplicateDelete(ctx, bucket, ObjectToDelete{
-				ObjectName: object.ObjectName,
-				VersionID:  object.VersionID,
-			}, goi, gerr)
-			replicateSync = repsync
-			if replicate {
-				if apiErrCode := checkRequestAuthType(ctx, r, policy.ReplicateDeleteAction, bucket, object.ObjectName); apiErrCode != ErrNone {
-					if apiErrCode == ErrSignatureDoesNotMatch || apiErrCode == ErrInvalidAccessKeyID {
-						writeErrorResponse(ctx, w, errorCodes.ToAPIErr(apiErrCode), r.URL, guessIsBrowserReq(r))
-						return
-					}
-					continue
-				}
-				if object.VersionID != "" {
-					object.VersionPurgeStatus = Pending
-				} else {
-					object.DeleteMarkerReplicationStatus = string(replication.Pending)
-				}
-			}
-		}
 		if object.VersionID != "" {
 			if hasLockEnabled {
 				if apiErrCode := enforceRetentionBypassForDelete(ctx, r, bucket, object, goi, gerr); apiErrCode != ErrNone {
-					apiErr := errorCodes.ToAPIErr(apiErrCode)
+					apiErr := errorCodes.ToAPIErr(ctx, apiErrCode)
 					dErrs[index] = DeleteError{
 						Code:      apiErr.Code,
 						Message:   apiErr.Description,
@@ -395,8 +372,8 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 
 	deleteList := toNames(objectsToDelete)
 	dObjects, errs := deleteObjectsFn(ctx, bucket, deleteList, ObjectOptions{
-		Versioned:        globalBucketVersioningSys.Enabled(bucket),
-		VersionSuspended: globalBucketVersioningSys.Suspended(bucket),
+		Versioned:        api.BucketVersioningSys.Enabled(bucket),
+		VersionSuspended: api.BucketVersioningSys.Suspended(bucket),
 	})
 	deletedObjects := make([]DeletedObject, len(deleteObjects.Objects))
 	for i := range errs {
@@ -413,10 +390,6 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 		}
 		dindex := objectsToDelete[objToDel]
 		if errs[i] == nil || isErrObjectNotFound(errs[i]) || isErrVersionNotFound(errs[i]) {
-			if replicateDeletes {
-				dObjects[i].DeleteMarkerReplicationStatus = deleteList[i].DeleteMarkerReplicationStatus
-				dObjects[i].VersionPurgeStatus = deleteList[i].VersionPurgeStatus
-			}
 			deletedObjects[dindex] = dObjects[i]
 			continue
 		}
@@ -441,20 +414,10 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 	encodedSuccessResponse := encodeResponse(response)
 
 	// Write success response.
-	writeSuccessResponseXML(w, encodedSuccessResponse)
+	writeSuccessResponseXML(ctx, w, encodedSuccessResponse)
 	for _, dobj := range deletedObjects {
 		if dobj.ObjectName == "" {
 			continue
-		}
-
-		if replicateDeletes {
-			if dobj.DeleteMarkerReplicationStatus == string(replication.Pending) || dobj.VersionPurgeStatus == Pending {
-				dv := DeletedObjectVersionInfo{
-					DeletedObject: dobj,
-					Bucket:        bucket,
-				}
-				scheduleReplicationDelete(ctx, dv, objectAPI, replicateSync)
-			}
 		}
 
 		eventName := event.ObjectRemovedDelete
@@ -469,7 +432,7 @@ func (api objectAPIHandlers) DeleteMultipleObjectsHandler(w http.ResponseWriter,
 			eventName = event.ObjectRemovedDeleteMarkerCreated
 		}
 
-		sendEvent(eventArgs{
+		sendEvent(api.Globals, eventArgs{
 			EventName:    eventName,
 			BucketName:   bucket,
 			Object:       objInfo,
@@ -491,7 +454,7 @@ func (api objectAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Req
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -502,28 +465,28 @@ func (api objectAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Req
 	if vs, found := r.Header[http.CanonicalHeaderKey("x-amz-bucket-object-lock-enabled")]; found {
 		v := strings.ToLower(strings.Join(vs, ""))
 		if v != "true" && v != "false" {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
 			return
 		}
 		objectLockEnabled = v == "true"
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.CreateBucketAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Parse incoming location constraint.
 	location, s3Error := parseLocationConstraint(r)
 	if s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Validate if location sent by the client is valid, reject
 	// requests which do not follow valid region requirements.
-	if !isValidLocation(location) {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidRegion), r.URL, guessIsBrowserReq(r))
+	if !isValidLocation(api.ServerRegion, location) {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrInvalidRegion), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -540,16 +503,16 @@ func (api objectAPIHandlers) PutBucketHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Load updated bucket metadata into memory.
-	globalNotificationSys.LoadBucketMetadata(GlobalContext, bucket)
+	api.NotificationSys.LoadBucketMetadata(GlobalContext, bucket)
 
 	// Make sure to add Location information here only for bucket
 	if cp := pathClean(r.URL.Path); cp != "" {
 		w.Header().Set(xhttp.Location, cp) // Clean any trailing slashes.
 	}
 
-	writeSuccessResponseHeadersOnly(w)
+	writeSuccessResponseHeadersOnly(ctx, w)
 
-	sendEvent(eventArgs{
+	sendEvent(api.Globals, eventArgs{
 		EventName:    event.BucketCreated,
 		BucketName:   bucket,
 		ReqParams:    extractReqParams(r),
@@ -570,17 +533,17 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if crypto.S3KMS.IsRequested(r.Header) { // SSE-KMS is not supported
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if _, ok := crypto.IsRequested(r.Header); !objectAPI.IsEncryptionSupported() && ok {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -589,19 +552,19 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	// Require Content-Length to be set in the request
 	size := r.ContentLength
 	if size < 0 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
-	resource, err := getResource(r.URL.Path, r.Host, globalDomainNames)
+	resource, err := getResource(r.URL.Path, r.Host, api.DomainNames)
 	if err != nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrInvalidRequest), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Make sure that the URL does not contain object name.
 	if bucket != path.Clean(resource[1:]) {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -610,7 +573,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	reader, err := r.MultipartReader()
 	if err != nil {
 		logger.LogIf(ctx, err)
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -618,7 +581,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	form, err := reader.ReadForm(maxFormMemory)
 	if err != nil {
 		logger.LogIf(ctx, err, logger.Application)
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -629,13 +592,13 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	fileBody, fileName, fileSize, formValues, err := extractPostPolicyFormValues(ctx, form)
 	if err != nil {
 		logger.LogIf(ctx, err, logger.Application)
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Check if file is provided, error out otherwise.
 	if fileBody == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPOSTFileRequired), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPOSTFileRequired), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -656,15 +619,15 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	if successRedirect != "" {
 		redirectURL, err = url.Parse(successRedirect)
 		if err != nil {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	}
 
 	// Verify policy signature.
-	cred, errCode := doesPolicySignatureMatch(formValues)
+	cred, errCode := doesPolicySignatureMatch(ctx, formValues)
 	if errCode != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(errCode), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, errCode), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -673,7 +636,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	{
 		token := formValues.Get(xhttp.AmzSecurityToken)
 		if token != "" && cred.AccessKey == "" {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNoAccessKey), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrNoAccessKey), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
@@ -682,34 +645,34 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		}
 
 		if subtle.ConstantTimeCompare([]byte(token), []byte(cred.SessionToken)) != 1 {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidToken), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrInvalidToken), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
 		// Extract claims if any.
-		claims, err := getClaimsFromToken(token)
+		claims, err := getClaimsFromToken(api.ActiveCred, getSessionToken(r))
 		if err != nil {
 			writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
-		if !globalIAMSys.IsAllowed(iampolicy.Args{
+		if !api.IAMSys.IsAllowed(iampolicy.Args{
 			AccountName:     cred.AccessKey,
 			Action:          iampolicy.PutObjectAction,
 			ConditionValues: getConditionValues(r, "", cred.AccessKey, claims),
 			BucketName:      bucket,
 			ObjectName:      object,
-			IsOwner:         globalActiveCred.AccessKey == cred.AccessKey,
+			IsOwner:         api.ActiveCred.AccessKey == cred.AccessKey,
 			Claims:          claims,
 		}) {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrAccessDenied), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrAccessDenied), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	}
 
 	policyBytes, err := base64.StdEncoding.DecodeString(formValues.Get("Policy"))
 	if err != nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMalformedPOSTRequest), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -717,7 +680,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	if len(policyBytes) > 0 {
 		postPolicyForm, err := parsePostPolicyForm(bytes.NewReader(policyBytes))
 		if err != nil {
-			errAPI := errorCodes.ToAPIErr(ErrPostPolicyConditionInvalidFormat)
+			errAPI := errorCodes.ToAPIErr(ctx, ErrPostPolicyConditionInvalidFormat)
 			errAPI.Description = fmt.Sprintf("%s '(%s)'", errAPI.Description, err)
 			writeErrorResponse(ctx, w, errAPI, r.URL, guessIsBrowserReq(r))
 			return
@@ -725,7 +688,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 
 		// Make sure formValues adhere to policy restrictions.
 		if err = checkPostPolicy(formValues, postPolicyForm); err != nil {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErrWithErr(ErrAccessDenied, err), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErrWithErr(ctx, ErrAccessDenied, err), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
@@ -764,7 +727,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	var objectEncryptionKey crypto.ObjectKey
 
 	// Check if bucket encryption is enabled
-	if _, err = globalBucketSSEConfigSys.Get(bucket); err == nil {
+	if _, err = api.BucketSSEConfigSys.Get(bucket); err == nil {
 		// This request header needs to be set prior to setting ObjectOptions
 		if !crypto.SSEC.IsRequested(r.Header) {
 			r.Header.Set(xhttp.AmzServerSideEncryption, xhttp.AmzEncryptionAES)
@@ -773,9 +736,9 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 
 	// get gateway encryption options
 	var opts ObjectOptions
-	opts, err = putOpts(ctx, r, bucket, object, metadata)
+	opts, err = api.putOpts(ctx, r, bucket, object, metadata)
 	if err != nil {
-		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+		writeErrorResponseHeadersOnly(ctx, w, toAPIError(ctx, err))
 		return
 	}
 	if objectAPI.IsEncryptionSupported() {
@@ -829,10 +792,10 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 		w.Header()[xhttp.AmzVersionID] = []string{objInfo.VersionID}
 	}
 
-	w.Header().Set(xhttp.Location, getObjectLocation(r, globalDomainNames, bucket, object))
+	w.Header().Set(xhttp.Location, getObjectLocation(r, api.DomainNames, bucket, object))
 
 	// Notify object created event.
-	defer sendEvent(eventArgs{
+	defer sendEvent(api.Globals, eventArgs{
 		EventName:    event.ObjectCreatedPost,
 		BucketName:   objInfo.Bucket,
 		Object:       objInfo,
@@ -845,7 +808,7 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 	if successRedirect != "" {
 		// Replace raw query params..
 		redirectURL.RawQuery = getRedirectPostRawQuery(objInfo)
-		writeRedirectSeeOther(w, redirectURL.String())
+		writeRedirectSeeOther(ctx, w, redirectURL.String())
 		return
 	}
 
@@ -858,11 +821,11 @@ func (api objectAPIHandlers) PostPolicyBucketHandler(w http.ResponseWriter, r *h
 			ETag:     `"` + objInfo.ETag + `"`,
 			Location: w.Header().Get(xhttp.Location),
 		})
-		writeResponse(w, http.StatusCreated, resp, mimeXML)
+		writeResponse(ctx, w, http.StatusCreated, resp, mimeXML)
 	case "200":
-		writeSuccessResponseHeadersOnly(w)
+		writeSuccessResponseHeadersOnly(ctx, w)
 	default:
-		writeSuccessNoContent(w)
+		writeSuccessNoContent(ctx, w)
 	}
 }
 
@@ -878,12 +841,12 @@ func (api objectAPIHandlers) GetBucketPolicyStatusHandler(w http.ResponseWriter,
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrServerNotInitialized))
+		writeErrorResponseHeadersOnly(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetBucketPolicyStatusAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(s3Error))
+		writeErrorResponseHeadersOnly(ctx, w, errorCodes.ToAPIErr(ctx, s3Error))
 		return
 	}
 
@@ -894,7 +857,7 @@ func (api objectAPIHandlers) GetBucketPolicyStatusHandler(w http.ResponseWriter,
 	}
 
 	// Check if anonymous (non-owner) has access to list objects.
-	readable := globalPolicySys.IsAllowed(policy.Args{
+	readable := api.PolicySys.IsAllowed(policy.Args{
 		Action:          policy.ListBucketAction,
 		BucketName:      bucket,
 		ConditionValues: getConditionValues(r, "", "", nil),
@@ -902,7 +865,7 @@ func (api objectAPIHandlers) GetBucketPolicyStatusHandler(w http.ResponseWriter,
 	})
 
 	// Check if anonymous (non-owner) has access to upload objects.
-	writable := globalPolicySys.IsAllowed(policy.Args{
+	writable := api.PolicySys.IsAllowed(policy.Args{
 		Action:          policy.PutObjectAction,
 		BucketName:      bucket,
 		ConditionValues: getConditionValues(r, "", "", nil),
@@ -921,7 +884,7 @@ func (api objectAPIHandlers) GetBucketPolicyStatusHandler(w http.ResponseWriter,
 		}(),
 	})
 
-	writeSuccessResponseXML(w, encodedSuccessResponse)
+	writeSuccessResponseXML(ctx, w, encodedSuccessResponse)
 }
 
 // HeadBucketHandler - HEAD Bucket
@@ -940,23 +903,23 @@ func (api objectAPIHandlers) HeadBucketHandler(w http.ResponseWriter, r *http.Re
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(ErrServerNotInitialized))
+		writeErrorResponseHeadersOnly(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.ListBucketAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponseHeadersOnly(w, errorCodes.ToAPIErr(s3Error))
+		writeErrorResponseHeadersOnly(ctx, w, errorCodes.ToAPIErr(ctx, s3Error))
 		return
 	}
 
 	getBucketInfo := objectAPI.GetBucketInfo
 
 	if _, err := getBucketInfo(ctx, bucket); err != nil {
-		writeErrorResponseHeadersOnly(w, toAPIError(ctx, err))
+		writeErrorResponseHeadersOnly(ctx, w, toAPIError(ctx, err))
 		return
 	}
 
-	writeSuccessResponseHeadersOnly(w)
+	writeSuccessResponseHeadersOnly(ctx, w)
 }
 
 // DeleteBucketHandler - Delete bucket
@@ -970,13 +933,13 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Verify if the caller has sufficient permissions.
 	if s3Error := checkRequestAuthType(ctx, r, policy.DeleteBucketAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -985,7 +948,7 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 		var err error
 		forceDelete, err = strconv.ParseBool(value)
 		if err != nil {
-			apiErr := errorCodes.ToAPIErr(ErrInvalidRequest)
+			apiErr := errorCodes.ToAPIErr(ctx, ErrInvalidRequest)
 			apiErr.Description = err.Error()
 			writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
 			return
@@ -994,13 +957,13 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 		// if force delete header is set, we need to evaluate the policy anyways
 		// regardless of it being true or not.
 		if s3Error := checkRequestAuthType(ctx, r, policy.ForceDeleteBucketAction, bucket, ""); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 			return
 		}
 
 		if forceDelete {
-			if rcfg, _ := globalBucketObjectLockSys.Get(bucket); rcfg.LockEnabled {
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
+			if rcfg, _ := api.BucketObjectLockSys.Get(bucket); rcfg.LockEnabled {
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMethodNotAllowed), r.URL, guessIsBrowserReq(r))
 				return
 			}
 		}
@@ -1010,7 +973,7 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 
 	// Attempt to delete bucket.
 	if err := deleteBucket(ctx, bucket, forceDelete); err != nil {
-		if _, ok := err.(BucketNotEmpty); ok && (globalBucketVersioningSys.Enabled(bucket) || globalBucketVersioningSys.Suspended(bucket)) {
+		if _, ok := err.(BucketNotEmpty); ok && (api.BucketVersioningSys.Enabled(bucket) || api.BucketVersioningSys.Suspended(bucket)) {
 			apiErr := toAPIError(ctx, err)
 			apiErr.Description = "The bucket you tried to delete is not empty. You must delete all versions in the bucket."
 			writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
@@ -1020,12 +983,12 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	globalNotificationSys.DeleteBucketMetadata(ctx, bucket)
+	api.NotificationSys.DeleteBucketMetadata(ctx, bucket)
 
 	// Write success response.
-	writeSuccessNoContent(w)
+	writeSuccessNoContent(ctx, w)
 
-	sendEvent(eventArgs{
+	sendEvent(api.Globals, eventArgs{
 		EventName:    event.BucketRemoved,
 		BucketName:   bucket,
 		ReqParams:    extractReqParams(r),
@@ -1042,7 +1005,7 @@ func (api objectAPIHandlers) DeleteBucketHandler(w http.ResponseWriter, r *http.
 // to every new object placed in the specified bucket.
 func (api objectAPIHandlers) PutBucketObjectLockConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PutBucketObjectLockConfig")
-	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL)
 	return
 }
 
@@ -1061,17 +1024,17 @@ func (api objectAPIHandlers) GetBucketObjectLockConfigHandler(w http.ResponseWri
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// check if user has permissions to perform this operation
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetBucketObjectLockConfigurationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
-	config, err := globalBucketMetadataSys.GetObjectLockConfig(bucket)
+	config, err := api.BucketMetadataSys.GetObjectLockConfig(bucket)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -1084,7 +1047,7 @@ func (api objectAPIHandlers) GetBucketObjectLockConfigHandler(w http.ResponseWri
 	}
 
 	// Write success response.
-	writeSuccessResponseXML(w, configData)
+	writeSuccessResponseXML(ctx, w, configData)
 }
 
 // PutBucketTaggingHandler - PUT Bucket tagging.
@@ -1099,18 +1062,18 @@ func (api objectAPIHandlers) PutBucketTaggingHandler(w http.ResponseWriter, r *h
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutBucketTaggingAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	tags, err := tags.ParseBucketXML(io.LimitReader(r.Body, r.ContentLength))
 	if err != nil {
-		apiErr := errorCodes.ToAPIErr(ErrMalformedXML)
+		apiErr := errorCodes.ToAPIErr(ctx, ErrMalformedXML)
 		apiErr.Description = err.Error()
 		writeErrorResponse(ctx, w, apiErr, r.URL, guessIsBrowserReq(r))
 		return
@@ -1122,13 +1085,13 @@ func (api objectAPIHandlers) PutBucketTaggingHandler(w http.ResponseWriter, r *h
 		return
 	}
 
-	if err = globalBucketMetadataSys.Update(bucket, bucketTaggingConfig, configData); err != nil {
+	if err = api.BucketMetadataSys.Update(bucket, bucketTaggingConfig, configData); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Write success response.
-	writeSuccessResponseHeadersOnly(w)
+	writeSuccessResponseHeadersOnly(ctx, w)
 }
 
 // GetBucketTaggingHandler - GET Bucket tagging.
@@ -1143,17 +1106,17 @@ func (api objectAPIHandlers) GetBucketTaggingHandler(w http.ResponseWriter, r *h
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// check if user has permissions to perform this operation
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetBucketTaggingAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
-	config, err := globalBucketMetadataSys.GetTaggingConfig(bucket)
+	config, err := api.BucketMetadataSys.GetTaggingConfig(bucket)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -1166,7 +1129,7 @@ func (api objectAPIHandlers) GetBucketTaggingHandler(w http.ResponseWriter, r *h
 	}
 
 	// Write success response.
-	writeSuccessResponseXML(w, configData)
+	writeSuccessResponseXML(ctx, w, configData)
 }
 
 // DeleteBucketTaggingHandler - DELETE Bucket tagging.
@@ -1181,22 +1144,22 @@ func (api objectAPIHandlers) DeleteBucketTaggingHandler(w http.ResponseWriter, r
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutBucketTaggingAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
-	if err := globalBucketMetadataSys.Update(bucket, bucketTaggingConfig, nil); err != nil {
+	if err := api.BucketMetadataSys.Update(bucket, bucketTaggingConfig, nil); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Write success response.
-	writeSuccessResponseHeadersOnly(w)
+	writeSuccessResponseHeadersOnly(ctx, w)
 }
 
 // PutBucketReplicationConfigHandler - PUT Bucket replication configuration.
@@ -1205,7 +1168,7 @@ func (api objectAPIHandlers) DeleteBucketTaggingHandler(w http.ResponseWriter, r
 func (api objectAPIHandlers) PutBucketReplicationConfigHandler(w http.ResponseWriter, r *http.Request) {
 	ctx := newContext(r, w, "PutBucketReplicationConfig")
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
-	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL)
+	writeErrorResponseJSON(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL)
 	return
 }
 
@@ -1222,13 +1185,13 @@ func (api objectAPIHandlers) GetBucketReplicationConfigHandler(w http.ResponseWr
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// check if user has permissions to perform this operation
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetReplicationConfigurationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 	// Check if bucket exists.
@@ -1237,7 +1200,7 @@ func (api objectAPIHandlers) GetBucketReplicationConfigHandler(w http.ResponseWr
 		return
 	}
 
-	config, err := globalBucketMetadataSys.GetReplicationConfig(ctx, bucket)
+	config, err := api.BucketMetadataSys.GetReplicationConfig(ctx, bucket)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
@@ -1249,7 +1212,7 @@ func (api objectAPIHandlers) GetBucketReplicationConfigHandler(w http.ResponseWr
 	}
 
 	// Write success response.
-	writeSuccessResponseXML(w, configData)
+	writeSuccessResponseXML(ctx, w, configData)
 }
 
 // DeleteBucketReplicationConfigHandler - DELETE Bucket replication config.
@@ -1262,12 +1225,12 @@ func (api objectAPIHandlers) DeleteBucketReplicationConfigHandler(w http.Respons
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if s3Error := checkRequestAuthType(ctx, r, policy.PutReplicationConfigurationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 	// Check if bucket exists.
@@ -1275,13 +1238,13 @@ func (api objectAPIHandlers) DeleteBucketReplicationConfigHandler(w http.Respons
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
-	if err := globalBucketMetadataSys.Update(bucket, bucketReplicationConfig, nil); err != nil {
+	if err := api.BucketMetadataSys.Update(bucket, bucketReplicationConfig, nil); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// Write success response.
-	writeSuccessResponseHeadersOnly(w)
+	writeSuccessResponseHeadersOnly(ctx, w)
 }
 
 // GetBucketReplicationMetricsHandler - GET Bucket replication metrics.
@@ -1297,13 +1260,13 @@ func (api objectAPIHandlers) GetBucketReplicationMetricsHandler(w http.ResponseW
 
 	objectAPI := api.ObjectAPI()
 	if objectAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	// check if user has permissions to perform this operation
 	if s3Error := checkRequestAuthType(ctx, r, policy.GetReplicationConfigurationAction, bucket, ""); s3Error != ErrNone {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -1313,7 +1276,7 @@ func (api objectAPIHandlers) GetBucketReplicationMetricsHandler(w http.ResponseW
 		return
 	}
 
-	bucketStats := globalNotificationSys.GetClusterBucketStats(r.Context(), bucket)
+	bucketStats := api.NotificationSys.GetClusterBucketStats(r.Context(), bucket)
 	bucketReplStats := BucketReplicationStats{}
 	// sum up metrics from each node in the cluster
 	for _, bucketStat := range bucketStats {
@@ -1324,14 +1287,6 @@ func (api objectAPIHandlers) GetBucketReplicationMetricsHandler(w http.ResponseW
 		bucketReplStats.ReplicaSize += bucketStat.ReplicationStats.ReplicaSize
 		bucketReplStats.ReplicatedSize += bucketStat.ReplicationStats.ReplicatedSize
 	}
-	// add initial usage from the time of cluster up
-	usageStat := globalReplicationStats.GetInitialUsage(bucket)
-	bucketReplStats.FailedCount += usageStat.FailedCount
-	bucketReplStats.FailedSize += usageStat.FailedSize
-	bucketReplStats.PendingCount += usageStat.PendingCount
-	bucketReplStats.PendingSize += usageStat.PendingSize
-	bucketReplStats.ReplicaSize += usageStat.ReplicaSize
-	bucketReplStats.ReplicatedSize += usageStat.ReplicatedSize
 
 	if err := json.NewEncoder(w).Encode(&bucketReplStats); err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))

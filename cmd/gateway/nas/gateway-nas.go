@@ -20,6 +20,7 @@ import (
 	"context"
 
 	"github.com/minio/cli"
+
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/madmin"
@@ -86,9 +87,9 @@ func (g *NAS) Name() string {
 }
 
 // NewGatewayLayer returns nas gatewaylayer.
-func (g *NAS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
+func (g *NAS) NewGatewayLayer(_ *minio.Globals, creds auth.Credentials) (minio.ObjectLayer, error) {
 	var err error
-	newObject, err := minio.NewFSObjectLayer(g.path)
+	newObject, err := minio.NewFSObjectLayer(nil, g.path)
 	if err != nil {
 		return nil, err
 	}

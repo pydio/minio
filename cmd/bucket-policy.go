@@ -34,11 +34,13 @@ import (
 )
 
 // PolicySys - policy subsystem.
-type PolicySys struct{}
+type PolicySys struct {
+	Globals *Globals
+}
 
 // Get returns stored bucket policy
 func (sys *PolicySys) Get(bucket string) (*policy.Policy, error) {
-	return globalBucketMetadataSys.GetPolicyConfig(bucket)
+	return sys.Globals.BucketMetadataSys.GetPolicyConfig(bucket)
 }
 
 // IsAllowed - checks given policy args is allowed to continue the Rest API.
@@ -59,8 +61,8 @@ func (sys *PolicySys) IsAllowed(args policy.Args) bool {
 }
 
 // NewPolicySys - creates new policy system.
-func NewPolicySys() *PolicySys {
-	return &PolicySys{}
+func NewPolicySys(g *Globals) *PolicySys {
+	return &PolicySys{Globals: g}
 }
 
 func getConditionValues(r *http.Request, lc string, username string, claims map[string]interface{}) map[string][]string {
@@ -72,7 +74,7 @@ func getConditionValues(r *http.Request, lc string, username string, claims map[
 		if len(claims) > 0 {
 			principalType = "AssumedRole"
 		}
-		if username == globalActiveCred.AccessKey {
+		if username == mustGlobalsFromContext(r.Context()).ActiveCred.AccessKey {
 			principalType = "Account"
 		}
 	}

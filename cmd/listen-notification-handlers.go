@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+
 	"github.com/minio/minio/cmd/logger"
 	policy "github.com/minio/minio/pkg/bucket/policy"
 	"github.com/minio/minio/pkg/event"
@@ -35,17 +36,17 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 	// Validate if bucket exists.
 	objAPI := api.ObjectAPI()
 	if objAPI == nil {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrServerNotInitialized), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if !objAPI.IsNotificationSupported() {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
 	if !objAPI.IsListenSupported() {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrNotImplemented), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrNotImplemented), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -54,12 +55,12 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 
 	if bucketName == "" {
 		if s3Error := checkRequestAuthType(ctx, r, policy.ListenNotificationAction, bucketName, ""); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	} else {
 		if s3Error := checkRequestAuthType(ctx, r, policy.ListenBucketNotificationAction, bucketName, ""); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
 			return
 		}
 	}
@@ -68,7 +69,7 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 
 	var prefix string
 	if len(values[peerRESTListenPrefix]) > 1 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrFilterNamePrefix), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrFilterNamePrefix), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -83,7 +84,7 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 
 	var suffix string
 	if len(values[peerRESTListenSuffix]) > 1 {
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrFilterNameSuffix), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrFilterNameSuffix), r.URL, guessIsBrowserReq(r))
 		return
 	}
 
@@ -124,9 +125,9 @@ func (api objectAPIHandlers) ListenNotificationHandler(w http.ResponseWriter, r 
 	// Use buffered channel to take care of burst sends or slow w.Write()
 	listenCh := make(chan interface{}, 4000)
 
-	peers, _ := newPeerRestClients(globalEndpoints)
+	peers, _ := newPeerRestClients()
 
-	globalHTTPListen.Subscribe(listenCh, ctx.Done(), func(evI interface{}) bool {
+	api.HTTPListen.Subscribe(listenCh, ctx.Done(), func(evI interface{}) bool {
 		ev, ok := evI.(event.Event)
 		if !ok {
 			return false

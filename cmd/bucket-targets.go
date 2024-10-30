@@ -43,6 +43,7 @@ const (
 // BucketTargetSys represents bucket targets subsystem
 type BucketTargetSys struct {
 	sync.RWMutex
+	Globals       *Globals
 	arnRemotesMap map[string]*TargetClient
 	targetsMap    map[string][]madmin.BucketTarget
 }
@@ -86,7 +87,7 @@ func (sys *BucketTargetSys) ListBucketTargets(ctx context.Context, bucket string
 
 // SetTarget - sets a new minio-go client target for this bucket.
 func (sys *BucketTargetSys) SetTarget(ctx context.Context, bucket string, tgt *madmin.BucketTarget, update bool) error {
-	if globalIsGateway {
+	if sys.Globals.IsGateway {
 		return nil
 	}
 	if !tgt.Type.IsValid() && !update {
@@ -104,10 +105,10 @@ func (sys *BucketTargetSys) SetTarget(ctx context.Context, bucket string, tgt *m
 		return BucketRemoteConnectionErr{Bucket: tgt.TargetBucket, Err: err}
 	}
 	if tgt.Type == madmin.ReplicationService {
-		return NotImplemented{Message: "Replication is not implemented in " + getMinioMode()}
+		return NotImplemented{Message: "Replication is not implemented in current mode"}
 	}
 	if tgt.Type == madmin.ILMService {
-		if globalBucketVersioningSys.Enabled(bucket) {
+		if sys.Globals.BucketVersioningSys.Enabled(bucket) {
 			vcfg, err := clnt.GetBucketVersioning(ctx, tgt.TargetBucket)
 			if err != nil {
 				if minio.ToErrorResponse(err).Code == "NoSuchBucket" {
@@ -156,7 +157,7 @@ func (sys *BucketTargetSys) SetTarget(ctx context.Context, bucket string, tgt *m
 
 // RemoveTarget - removes a remote bucket target for this source bucket.
 func (sys *BucketTargetSys) RemoveTarget(ctx context.Context, bucket, arnStr string) error {
-	if globalIsGateway {
+	if sys.Globals.IsGateway {
 		return nil
 	}
 	if arnStr == "" {
@@ -167,7 +168,7 @@ func (sys *BucketTargetSys) RemoveTarget(ctx context.Context, bucket, arnStr str
 		return BucketRemoteArnInvalid{Bucket: bucket}
 	}
 	if arn.Type == madmin.ReplicationService {
-		return NotImplemented{Message: "Replication is not implemented in " + getMinioMode()}
+		return NotImplemented{Message: "Replication is not implemented in current mode"}
 	}
 
 	// delete ARN type from list of matching targets
@@ -240,8 +241,9 @@ func (sys *BucketTargetSys) GetRemoteLabelWithArn(ctx context.Context, bucket, a
 }
 
 // NewBucketTargetSys - creates new replication system.
-func NewBucketTargetSys() *BucketTargetSys {
+func NewBucketTargetSys(g *Globals) *BucketTargetSys {
 	return &BucketTargetSys{
+		Globals:       g,
 		arnRemotesMap: make(map[string]*TargetClient),
 		targetsMap:    make(map[string][]madmin.BucketTarget),
 	}
@@ -254,7 +256,7 @@ func (sys *BucketTargetSys) Init(ctx context.Context, buckets []BucketInfo, objA
 	}
 
 	// In gateway mode, bucket targets is not supported.
-	if globalIsGateway {
+	if sys.Globals.IsGateway {
 		return nil
 	}
 
@@ -297,7 +299,7 @@ func (sys *BucketTargetSys) UpdateAllTargets(bucket string, tgts *madmin.BucketT
 // create minio-go clients for buckets having remote targets
 func (sys *BucketTargetSys) load(ctx context.Context, buckets []BucketInfo, objAPI ObjectLayer) {
 	for _, bucket := range buckets {
-		cfg, err := globalBucketMetadataSys.GetBucketTargetsConfig(bucket.Name)
+		cfg, err := sys.Globals.BucketMetadataSys.GetBucketTargetsConfig(bucket.Name)
 		if err != nil {
 			logger.LogIf(ctx, err)
 			continue
@@ -331,7 +333,7 @@ func (sys *BucketTargetSys) getRemoteTargetClient(tcfg *madmin.BucketTarget) (*T
 	creds := credentials.NewStaticV4(config.AccessKey, config.SecretKey, "")
 
 	getRemoteTargetInstanceTransportOnce.Do(func() {
-		getRemoteTargetInstanceTransport = NewRemoteTargetHTTPTransport()
+		getRemoteTargetInstanceTransport = NewRemoteTargetHTTPTransport(sys.Globals.RootCAs)
 	})
 	api, err := minio.New(tcfg.Endpoint, &miniogo.Options{
 		Creds:     creds,

@@ -63,7 +63,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 	// Headers to be set of object content is not going to be written to the client.
 	writeHeaders := func() {
 		// set common headers
-		setCommonHeaders(w)
+		setCommonHeaders(ctx, w)
 
 		// set object-related metadata headers
 		w.Header().Set(xhttp.LastModified, objInfo.ModTime.UTC().Format(http.TimeFormat))
@@ -80,7 +80,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 			if !ifModifiedSince(objInfo.ModTime, givenTime) {
 				// If the object is not modified since the specified time.
 				writeHeaders()
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
 				return true
 			}
 		}
@@ -94,7 +94,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 			if ifModifiedSince(objInfo.ModTime, givenTime) {
 				// If the object is modified since the specified time.
 				writeHeaders()
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
 				return true
 			}
 		}
@@ -107,7 +107,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 		if !isETagEqual(objInfo.ETag, ifMatchETagHeader) {
 			// If the object ETag does not match with the specified ETag.
 			writeHeaders()
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
 			return true
 		}
 	}
@@ -119,7 +119,7 @@ func checkCopyObjectPreconditions(ctx context.Context, w http.ResponseWriter, r 
 		if isETagEqual(objInfo.ETag, ifNoneMatchETagHeader) {
 			// If the object ETag matches with the specified ETag.
 			writeHeaders()
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
 			return true
 		}
 	}
@@ -149,7 +149,7 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	// Headers to be set of object content is not going to be written to the client.
 	writeHeaders := func() {
 		// set common headers
-		setCommonHeaders(w)
+		setCommonHeaders(ctx, w)
 
 		// set object-related metadata headers
 		w.Header().Set(xhttp.LastModified, objInfo.ModTime.UTC().Format(http.TimeFormat))
@@ -162,7 +162,7 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 	// Check if the part number is correct.
 	if opts.PartNumber > 1 && opts.PartNumber > len(objInfo.Parts) {
 		// According to S3 we don't need to set any object information here.
-		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrInvalidPartNumber), r.URL, guessIsBrowserReq(r))
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrInvalidPartNumber), r.URL, guessIsBrowserReq(r))
 		return true
 	}
 
@@ -188,7 +188,7 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 			if ifModifiedSince(objInfo.ModTime, givenTime) {
 				// If the object is modified since the specified time.
 				writeHeaders()
-				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
+				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
 				return true
 			}
 		}
@@ -201,7 +201,7 @@ func checkPreconditions(ctx context.Context, w http.ResponseWriter, r *http.Requ
 		if !isETagEqual(objInfo.ETag, ifMatchETagHeader) {
 			// If the object ETag does not match with the specified ETag.
 			writeHeaders()
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrPreconditionFailed), r.URL, guessIsBrowserReq(r))
 			return true
 		}
 	}

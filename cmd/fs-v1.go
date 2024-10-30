@@ -56,6 +56,7 @@ var defaultEtag = "00000000000000000000000000000000-1"
 // FSObjects - Implements fs object layer.
 type FSObjects struct {
 	GatewayUnsupported
+	*Globals
 
 	// The count of concurrent calls on FSObjects API
 	activeIOCount int64
@@ -120,7 +121,7 @@ func initMetaVolumeFS(fsPath, fsUUID string) error {
 }
 
 // NewFSObjectLayer - initialize new fs object layer.
-func NewFSObjectLayer(fsPath string) (ObjectLayer, error) {
+func NewFSObjectLayer(globals *Globals, fsPath string) (ObjectLayer, error) {
 	ctx := GlobalContext
 	if fsPath == "" {
 		return nil, errInvalidArgument
@@ -153,13 +154,14 @@ func NewFSObjectLayer(fsPath string) (ObjectLayer, error) {
 	}
 
 	// Initialize `format.json`, this function also returns.
-	rlk, err := initFormatFS(ctx, fsPath)
+	rlk, err := initFormatFS(ctx, globals, fsPath)
 	if err != nil {
 		return nil, err
 	}
 
 	// Initialize fs objects.
 	fs := &FSObjects{
+		Globals:      globals,
 		fsPath:       fsPath,
 		metaJSONFile: fsMetaJSONFile,
 		fsUUID:       fsUUID,
@@ -309,7 +311,7 @@ func (fs *FSObjects) NSScanner(ctx context.Context, bf *bloomFilter, updates cha
 		logger.LogIf(ctx, totalCache.save(ctx, fs, dataUsageCacheName))
 		cloned := totalCache.clone()
 		updates <- cloned.dui(dataUsageRoot, buckets)
-		enforceFIFOQuotaBucket(ctx, fs, b.Name, cloned.bucketUsageInfo(b.Name))
+		enforceFIFOQuotaBucket(ctx, fs.Globals, fs, b.Name, cloned.bucketUsageInfo(b.Name))
 	}
 
 	return nil
@@ -416,18 +418,18 @@ func (fs *FSObjects) MakeBucketWithLocation(ctx context.Context, bucket string, 
 	}
 
 	meta := newBucketMetadata(bucket)
-	if err := meta.Save(ctx, fs); err != nil {
+	if err := meta.Save(ctx, fs.Globals, fs); err != nil {
 		return toObjectErr(err, bucket)
 	}
 
-	globalBucketMetadataSys.Set(bucket, meta)
+	fs.BucketMetadataSys.Set(bucket, meta)
 
 	return nil
 }
 
 // GetBucketPolicy - only needed for FS in NAS mode
 func (fs *FSObjects) GetBucketPolicy(ctx context.Context, bucket string) (*policy.Policy, error) {
-	meta, err := loadBucketMetadata(ctx, fs, bucket)
+	meta, err := loadBucketMetadata(ctx, fs.Globals, fs, bucket)
 	if err != nil {
 		return nil, BucketPolicyNotFound{Bucket: bucket}
 	}
@@ -439,7 +441,7 @@ func (fs *FSObjects) GetBucketPolicy(ctx context.Context, bucket string) (*polic
 
 // SetBucketPolicy - only needed for FS in NAS mode
 func (fs *FSObjects) SetBucketPolicy(ctx context.Context, bucket string, p *policy.Policy) error {
-	meta, err := loadBucketMetadata(ctx, fs, bucket)
+	meta, err := loadBucketMetadata(ctx, fs.Globals, fs, bucket)
 	if err != nil {
 		return err
 	}
@@ -451,17 +453,17 @@ func (fs *FSObjects) SetBucketPolicy(ctx context.Context, bucket string, p *poli
 	}
 	meta.PolicyConfigJSON = configData
 
-	return meta.Save(ctx, fs)
+	return meta.Save(ctx, fs.Globals, fs)
 }
 
 // DeleteBucketPolicy - only needed for FS in NAS mode
 func (fs *FSObjects) DeleteBucketPolicy(ctx context.Context, bucket string) error {
-	meta, err := loadBucketMetadata(ctx, fs, bucket)
+	meta, err := loadBucketMetadata(ctx, fs.Globals, fs, bucket)
 	if err != nil {
 		return err
 	}
 	meta.PolicyConfigJSON = nil
-	return meta.Save(ctx, fs)
+	return meta.Save(ctx, fs.Globals, fs)
 }
 
 // GetBucketInfo - fetch bucket metadata info.
@@ -477,7 +479,7 @@ func (fs *FSObjects) GetBucketInfo(ctx context.Context, bucket string) (bi Bucke
 	}
 
 	createdTime := st.ModTime()
-	meta, err := globalBucketMetadataSys.Get(bucket)
+	meta, err := fs.BucketMetadataSys.Get(bucket)
 	if err == nil {
 		createdTime = meta.Created
 	}
@@ -523,7 +525,7 @@ func (fs *FSObjects) ListBuckets(ctx context.Context) ([]BucketInfo, error) {
 			continue
 		}
 		var created = fi.ModTime()
-		meta, err := globalBucketMetadataSys.Get(fi.Name())
+		meta, err := fs.BucketMetadataSys.Get(fi.Name())
 		if err == nil {
 			created = meta.Created
 		}
@@ -579,7 +581,7 @@ func (fs *FSObjects) DeleteBucket(ctx context.Context, bucket string, forceDelet
 	}
 
 	// Delete all bucket metadata.
-	deleteBucketMetadata(ctx, fs, bucket)
+	deleteBucketMetadata(ctx, fs.Globals, fs, bucket)
 
 	return nil
 }
@@ -603,7 +605,7 @@ func (fs *FSObjects) CopyObject(ctx context.Context, srcBucket, srcObject, dstBu
 
 	if !cpSrcDstSame {
 		objectDWLock := fs.NewNSLock(dstBucket, dstObject)
-		ctx, err = objectDWLock.GetLock(ctx, globalOperationTimeout)
+		ctx, err = objectDWLock.GetLock(ctx, fs.OperationTimeout)
 		if err != nil {
 			return oi, err
 		}
@@ -718,13 +720,13 @@ func (fs *FSObjects) GetObjectNInfo(ctx context.Context, bucket, object string, 
 		lock := fs.NewNSLock(bucket, object)
 		switch lockType {
 		case writeLock:
-			ctx, err = lock.GetLock(ctx, globalOperationTimeout)
+			ctx, err = lock.GetLock(ctx, fs.OperationTimeout)
 			if err != nil {
 				return nil, err
 			}
 			nsUnlocker = lock.Unlock
 		case readLock:
-			ctx, err = lock.GetRLock(ctx, globalOperationTimeout)
+			ctx, err = lock.GetRLock(ctx, fs.OperationTimeout)
 			if err != nil {
 				return nil, err
 			}
@@ -1015,7 +1017,7 @@ func (fs *FSObjects) getObjectInfo(ctx context.Context, bucket, object string) (
 func (fs *FSObjects) getObjectInfoWithLock(ctx context.Context, bucket, object string) (oi ObjectInfo, err error) {
 	// Lock the object before reading.
 	lk := fs.NewNSLock(bucket, object)
-	ctx, err = lk.GetRLock(ctx, globalOperationTimeout)
+	ctx, err = lk.GetRLock(ctx, fs.OperationTimeout)
 	if err != nil {
 		return oi, err
 	}
@@ -1054,7 +1056,7 @@ func (fs *FSObjects) GetObjectInfo(ctx context.Context, bucket, object string, o
 	oi, err := fs.getObjectInfoWithLock(ctx, bucket, object)
 	if err == errCorruptedFormat || err == io.EOF {
 		lk := fs.NewNSLock(bucket, object)
-		ctx, err = lk.GetLock(ctx, globalOperationTimeout)
+		ctx, err = lk.GetLock(ctx, fs.OperationTimeout)
 		if err != nil {
 			return oi, toObjectErr(err, bucket, object)
 		}
@@ -1106,7 +1108,7 @@ func (fs *FSObjects) PutObject(ctx context.Context, bucket string, object string
 
 	// Lock the object.
 	lk := fs.NewNSLock(bucket, object)
-	ctx, err = lk.GetLock(ctx, globalOperationTimeout)
+	ctx, err = lk.GetLock(ctx, fs.OperationTimeout)
 	if err != nil {
 		logger.LogIf(ctx, err)
 		return objInfo, err
@@ -1203,7 +1205,7 @@ func (fs *FSObjects) putObject(ctx context.Context, bucket string, object string
 	tempObj := mustGetUUID()
 
 	fsTmpObjPath := pathJoin(fs.fsPath, minioMetaTmpBucket, fs.fsUUID, tempObj)
-	bytesWritten, err := fsCreateFile(ctx, fsTmpObjPath, data, data.Size())
+	bytesWritten, err := fsCreateFile(ctx, fsTmpObjPath, data, data.Size(), fs.FSOSync)
 
 	// Delete the temporary object in the case of a
 	// failure. If PutObject succeeds, then there would be
@@ -1283,7 +1285,7 @@ func (fs *FSObjects) DeleteObject(ctx context.Context, bucket, object string, op
 
 	// Acquire a write lock before deleting the object.
 	lk := fs.NewNSLock(bucket, object)
-	ctx, err = lk.GetLock(ctx, globalOperationTimeout)
+	ctx, err = lk.GetLock(ctx, fs.OperationTimeout)
 	if err != nil {
 		return objInfo, err
 	}

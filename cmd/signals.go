@@ -26,16 +26,10 @@ import (
 	"github.com/minio/minio/cmd/logger"
 )
 
-func handleSignals() {
+func handleSignals(g *Globals) {
 	// Custom exit function
 	exit := func(success bool) {
 		// If global profiler is set stop before we exit.
-		globalProfilerMu.Lock()
-		defer globalProfilerMu.Unlock()
-		for _, p := range globalProfiler {
-			p.Stop()
-		}
-
 		if success {
 			os.Exit(0)
 		}
@@ -49,18 +43,18 @@ func handleSignals() {
 		// send signal to various go-routines that they need to quit.
 		cancelGlobalContext()
 
-		if globalNotificationSys != nil {
-			globalNotificationSys.RemoveAllRemoteTargets()
+		if g.NotificationSys != nil {
+			g.NotificationSys.RemoveAllRemoteTargets()
 		}
 
-		if httpServer := newHTTPServerFn(); httpServer != nil {
+		if httpServer := g.getHTTPServer(); httpServer != nil {
 			err = httpServer.Shutdown()
 			if !errors.Is(err, http.ErrServerClosed) {
 				logger.LogIf(context.Background(), err)
 			}
 		}
 
-		if objAPI := newObjectLayerFn(); objAPI != nil {
+		if objAPI := g.newObjectLayerFn(); objAPI != nil {
 			oerr = objAPI.Shutdown(context.Background())
 			logger.LogIf(context.Background(), oerr)
 		}
@@ -70,9 +64,9 @@ func handleSignals() {
 
 	for {
 		select {
-		case <-globalHTTPServerErrorCh:
+		case <-g.HTTPServerErrorCh:
 			exit(stopProcess())
-		case osSignal := <-globalOSSignalCh:
+		case osSignal := <-g.OSSignalCh:
 			logger.Info("Exiting on signal: %s", strings.ToUpper(osSignal.String()))
 			exit(stopProcess())
 		case signal := <-globalServiceSignalCh:

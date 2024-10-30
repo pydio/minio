@@ -17,11 +17,7 @@
 package cmd
 
 import (
-	"net/http"
 	"time"
-
-	xhttp "github.com/minio/minio/cmd/http"
-	"github.com/minio/minio/pkg/bucket/replication"
 )
 
 //go:generate msgp -file=$GOFILE
@@ -195,77 +191,4 @@ func (v VersionPurgeStatusType) Empty() bool {
 // Pending returns true if the version is pending purge.
 func (v VersionPurgeStatusType) Pending() bool {
 	return v == Pending || v == Failed
-}
-
-// ToObjectInfo - Converts metadata to object info.
-func (fi FileInfo) ToObjectInfo(bucket, object string) ObjectInfo {
-	object = decodeDirObject(object)
-	versionID := fi.VersionID
-	if (globalBucketVersioningSys.Enabled(bucket) || globalBucketVersioningSys.Suspended(bucket)) && versionID == "" {
-		versionID = nullVersionID
-	}
-
-	objInfo := ObjectInfo{
-		IsDir:            HasSuffix(object, SlashSeparator),
-		Bucket:           bucket,
-		Name:             object,
-		VersionID:        versionID,
-		IsLatest:         fi.IsLatest,
-		DeleteMarker:     fi.Deleted,
-		Size:             fi.Size,
-		ModTime:          fi.ModTime,
-		Legacy:           fi.XLV1,
-		ContentType:      fi.Metadata["content-type"],
-		ContentEncoding:  fi.Metadata["content-encoding"],
-		NumVersions:      fi.NumVersions,
-		SuccessorModTime: fi.SuccessorModTime,
-	}
-
-	// Update expires
-	var (
-		t time.Time
-		e error
-	)
-	if exp, ok := fi.Metadata["expires"]; ok {
-		if t, e = time.Parse(http.TimeFormat, exp); e == nil {
-			objInfo.Expires = t.UTC()
-		}
-	}
-	objInfo.backendType = BackendErasure
-
-	// Extract etag from metadata.
-	objInfo.ETag = extractETag(fi.Metadata)
-
-	// Add user tags to the object info
-	tags := fi.Metadata[xhttp.AmzObjectTagging]
-	if len(tags) != 0 {
-		objInfo.UserTags = tags
-	}
-
-	// Add replication status to the object info
-	objInfo.ReplicationStatus = replication.StatusType(fi.Metadata[xhttp.AmzBucketReplicationStatus])
-	if fi.Deleted {
-		objInfo.ReplicationStatus = replication.StatusType(fi.DeleteMarkerReplicationStatus)
-	}
-
-	objInfo.TransitionStatus = fi.TransitionStatus
-
-	// etag/md5Sum has already been extracted. We need to
-	// remove to avoid it from appearing as part of
-	// response headers. e.g, X-Minio-* or X-Amz-*.
-	// Tags have also been extracted, we remove that as well.
-	objInfo.UserDefined = cleanMetadata(fi.Metadata)
-
-	// All the parts per object.
-	objInfo.Parts = fi.Parts
-
-	// Update storage class
-	if sc, ok := fi.Metadata[xhttp.AmzStorageClass]; ok {
-		objInfo.StorageClass = sc
-	} else {
-		objInfo.StorageClass = globalMinioDefaultStorageClass
-	}
-	objInfo.VersionPurgeStatus = fi.VersionPurgeStatus
-	// Success.
-	return objInfo
 }

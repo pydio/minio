@@ -273,7 +273,7 @@ func fsOpenFile(ctx context.Context, readPath string, offset int64) (io.ReadClos
 }
 
 // Creates a file and copies data from incoming reader.
-func fsCreateFile(ctx context.Context, filePath string, reader io.Reader, fallocSize int64) (int64, error) {
+func fsCreateFile(ctx context.Context, filePath string, reader io.Reader, fallocSize int64, fSOSync bool) (int64, error) {
 	if filePath == "" || reader == nil {
 		logger.LogIf(ctx, errInvalidArgument)
 		return 0, errInvalidArgument
@@ -301,7 +301,7 @@ func fsCreateFile(ctx context.Context, filePath string, reader io.Reader, falloc
 	}
 
 	flags := os.O_CREATE | os.O_WRONLY
-	if globalFSOSync {
+	if fSOSync {
 		flags = flags | os.O_SYNC
 	}
 	writer, err := lock.Open(filePath, flags, 0666)

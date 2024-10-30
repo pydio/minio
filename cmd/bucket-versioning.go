@@ -19,11 +19,13 @@ package cmd
 import "github.com/minio/minio/pkg/bucket/versioning"
 
 // BucketVersioningSys - policy subsystem.
-type BucketVersioningSys struct{}
+type BucketVersioningSys struct {
+	*Globals
+}
 
 // Enabled enabled versioning?
 func (sys *BucketVersioningSys) Enabled(bucket string) bool {
-	vc, err := globalBucketMetadataSys.GetVersioningConfig(bucket)
+	vc, err := sys.Globals.BucketMetadataSys.GetVersioningConfig(bucket)
 	if err != nil {
 		return false
 	}
@@ -32,7 +34,7 @@ func (sys *BucketVersioningSys) Enabled(bucket string) bool {
 
 // Suspended suspended versioning?
 func (sys *BucketVersioningSys) Suspended(bucket string) bool {
-	vc, err := globalBucketMetadataSys.GetVersioningConfig(bucket)
+	vc, err := sys.Globals.BucketMetadataSys.GetVersioningConfig(bucket)
 	if err != nil {
 		return false
 	}
@@ -41,14 +43,14 @@ func (sys *BucketVersioningSys) Suspended(bucket string) bool {
 
 // Get returns stored bucket policy
 func (sys *BucketVersioningSys) Get(bucket string) (*versioning.Versioning, error) {
-	if globalIsGateway {
-		objAPI := newObjectLayerFn()
+	if sys.Globals.IsGateway {
+		objAPI := sys.Globals.newObjectLayerFn()
 		if objAPI == nil {
 			return nil, errServerNotInitialized
 		}
 		return nil, NotImplemented{}
 	}
-	return globalBucketMetadataSys.GetVersioningConfig(bucket)
+	return sys.Globals.BucketMetadataSys.GetVersioningConfig(bucket)
 }
 
 // Reset BucketVersioningSys to initial state.
@@ -57,6 +59,6 @@ func (sys *BucketVersioningSys) Reset() {
 }
 
 // NewBucketVersioningSys - creates new versioning system.
-func NewBucketVersioningSys() *BucketVersioningSys {
-	return &BucketVersioningSys{}
+func NewBucketVersioningSys(g *Globals) *BucketVersioningSys {
+	return &BucketVersioningSys{Globals: g}
 }

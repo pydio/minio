@@ -19,8 +19,6 @@ package cmd
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync"
 
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/config/api"
@@ -36,8 +34,6 @@ import (
 	"github.com/minio/minio/cmd/config/storageclass"
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
-	"github.com/minio/minio/cmd/logger/target/http"
-	"github.com/minio/minio/pkg/madmin"
 )
 
 func initHelp() {
@@ -207,24 +203,19 @@ func initHelp() {
 	config.RegisterHelpSubSys(helpMap)
 }
 
-var (
-	globalServerConfig   config.Config
-	globalServerConfigMu sync.RWMutex
-)
-
-func lookupConfigs(s config.Config, setDriveCounts []int) {
+func (gl *Globals) lookupConfigs(s config.Config, setDriveCounts []int) {
 	ctx := GlobalContext
 
 	var err error
-	if !globalActiveCred.IsValid() {
+	if !gl.ActiveCred.IsValid() {
 		// Env doesn't seem to be set, we fallback to lookup creds from the config.
-		globalActiveCred, err = config.LookupCreds(s[config.CredentialsSubSys][config.Default])
+		gl.ActiveCred, err = config.LookupCreds(s[config.CredentialsSubSys][config.Default])
 		if err != nil {
 			logger.LogIf(ctx, fmt.Errorf("Invalid credentials configuration: %w", err))
 		}
 	}
 
-	globalServerRegion, err = config.LookupRegion(s[config.RegionSubSys][config.Default])
+	gl.ServerRegion, err = config.LookupRegion(s[config.RegionSubSys][config.Default])
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("Invalid region configuration: %w", err))
 	}
@@ -234,74 +225,25 @@ func lookupConfigs(s config.Config, setDriveCounts []int) {
 		logger.LogIf(ctx, fmt.Errorf("Invalid api configuration: %w", err))
 	}
 
-	globalAPIConfig.init(apiConfig, setDriveCounts)
+	gl.APIConfig.init(gl, apiConfig, setDriveCounts)
 
-	// Initialize remote instance transport once.
-	getRemoteInstanceTransportOnce.Do(func() {
-		getRemoteInstanceTransport = newGatewayHTTPTransport(apiConfig.RemoteTransportDeadline)
-	})
-
-	// Load logger targets based on user's configuration
-	loggerUserAgent := getUserAgent(getMinioMode())
-
-	loggerCfg, err := logger.LookupConfig(s)
-	if err != nil {
-		logger.LogIf(ctx, fmt.Errorf("Unable to initialize logger: %w", err))
-	}
-
-	for k, l := range loggerCfg.HTTP {
-		if l.Enabled {
-			// Enable http logging
-			if err = logger.AddTarget(
-				http.New(
-					http.WithTargetName(k),
-					http.WithEndpoint(l.Endpoint),
-					http.WithAuthToken(l.AuthToken),
-					http.WithUserAgent(loggerUserAgent),
-					http.WithLogKind(string(logger.All)),
-					http.WithTransport(NewGatewayHTTPTransport()),
-				),
-			); err != nil {
-				logger.LogIf(ctx, fmt.Errorf("Unable to initialize console HTTP target: %w", err))
-			}
-		}
-	}
-
-	for k, l := range loggerCfg.Audit {
-		if l.Enabled {
-			// Enable http audit logging
-			if err = logger.AddAuditTarget(
-				http.New(
-					http.WithTargetName(k),
-					http.WithEndpoint(l.Endpoint),
-					http.WithAuthToken(l.AuthToken),
-					http.WithUserAgent(loggerUserAgent),
-					http.WithLogKind(string(logger.All)),
-					http.WithTransport(NewGatewayHTTPTransportWithClientCerts(l.ClientCert, l.ClientKey)),
-				),
-			); err != nil {
-				logger.LogIf(ctx, fmt.Errorf("Unable to initialize audit HTTP target: %w", err))
-			}
-		}
-	}
-
-	globalConfigTargetList, err = notify.GetNotificationTargets(GlobalContext, s, NewGatewayHTTPTransport(), false)
+	gl.ConfigTargetList, err = notify.GetNotificationTargets(GlobalContext, s, NewGatewayHTTPTransport(gl), false)
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("Unable to initialize notification target(s): %w", err))
 	}
 
-	globalEnvTargetList, err = notify.GetNotificationTargets(GlobalContext, newServerConfig(), NewGatewayHTTPTransport(), true)
+	gl.EnvTargetList, err = notify.GetNotificationTargets(GlobalContext, gl.newServerConfig(), NewGatewayHTTPTransport(gl), true)
 	if err != nil {
 		logger.LogIf(ctx, fmt.Errorf("Unable to initialize notification target(s): %w", err))
 	}
 
 	// Apply dynamic config values
-	logger.LogIf(ctx, applyDynamicConfig(ctx, newObjectLayerFn(), s))
+	logger.LogIf(ctx, gl.applyDynamicConfig(ctx, gl.newObjectLayerFn(), s))
 }
 
 // applyDynamicConfig will apply dynamic config values.
 // Dynamic systems should be in config.SubSystemsDynamic as well.
-func applyDynamicConfig(ctx context.Context, objAPI ObjectLayer, s config.Config) error {
+func (gl *Globals) applyDynamicConfig(ctx context.Context, objAPI ObjectLayer, s config.Config) error {
 	if objAPI == nil {
 		return nil
 	}
@@ -324,12 +266,6 @@ func applyDynamicConfig(ctx context.Context, objAPI ObjectLayer, s config.Config
 		return fmt.Errorf("Backend does not support compression")
 	}
 
-	// Heal
-	healCfg, err := heal.LookupConfig(s[config.HealSubSys][config.Default])
-	if err != nil {
-		return fmt.Errorf("Unable to apply heal config: %w", err)
-	}
-
 	// Scanner
 	scannerCfg, err := scanner.LookupConfig(s[config.ScannerSubSys][config.Default])
 	if err != nil {
@@ -338,159 +274,65 @@ func applyDynamicConfig(ctx context.Context, objAPI ObjectLayer, s config.Config
 
 	// Apply configurations.
 	// We should not fail after this.
-	globalAPIConfig.init(apiConfig, objAPI.SetDriveCounts())
+	gl.APIConfig.init(gl, apiConfig, objAPI.SetDriveCounts())
 
-	globalCompressConfigMu.Lock()
-	globalCompressConfig = cmpCfg
-	globalCompressConfigMu.Unlock()
-
-	globalHealConfigMu.Lock()
-	globalHealConfig = healCfg
-	globalHealConfigMu.Unlock()
+	gl.CompressConfigMu.Lock()
+	gl.CompressConfig = cmpCfg
+	gl.CompressConfigMu.Unlock()
 
 	// update dynamic scanner values.
 	scannerCycle.Update(scannerCfg.Cycle)
 	logger.LogIf(ctx, scannerSleeper.Update(scannerCfg.Delay, scannerCfg.MaxWait))
 
 	// Update all dynamic config values in memory.
-	globalServerConfigMu.Lock()
-	defer globalServerConfigMu.Unlock()
-	if globalServerConfig != nil {
+	gl.ServerConfigMu.Lock()
+	defer gl.ServerConfigMu.Unlock()
+	if gl.ServerConfig != nil {
 		for k := range config.SubSystemsDynamic {
-			globalServerConfig[k] = s[k]
+			gl.ServerConfig[k] = s[k]
 		}
 	}
 	return nil
 }
 
-// Help - return sub-system level help
-type Help struct {
-	SubSys          string         `json:"subSys"`
-	Description     string         `json:"description"`
-	MultipleTargets bool           `json:"multipleTargets"`
-	KeysHelp        config.HelpKVS `json:"keysHelp"`
-}
-
-// GetHelp - returns help for sub-sys, a key for a sub-system or all the help.
-func GetHelp(subSys, key string, envOnly bool) (Help, error) {
-	if len(subSys) == 0 {
-		return Help{KeysHelp: config.HelpSubSysMap[subSys]}, nil
-	}
-	subSystemValue := strings.SplitN(subSys, config.SubSystemSeparator, 2)
-	if len(subSystemValue) == 0 {
-		return Help{}, config.Errorf("invalid number of arguments %s", subSys)
-	}
-
-	subSys = subSystemValue[0]
-
-	subSysHelp, ok := config.HelpSubSysMap[""].Lookup(subSys)
-	if !ok {
-		return Help{}, config.Errorf("unknown sub-system %s", subSys)
-	}
-
-	h, ok := config.HelpSubSysMap[subSys]
-	if !ok {
-		return Help{}, config.Errorf("unknown sub-system %s", subSys)
-	}
-	if key != "" {
-		value, ok := h.Lookup(key)
-		if !ok {
-			return Help{}, config.Errorf("unknown key %s for sub-system %s",
-				key, subSys)
-		}
-		h = config.HelpKVS{value}
-	}
-
-	envHelp := config.HelpKVS{}
-	if envOnly {
-		// Only for multiple targets, make sure
-		// to list the ENV, for regular k/v EnableKey is
-		// implicit, for ENVs we cannot make it implicit.
-		if subSysHelp.MultipleTargets {
-			envK := config.EnvPrefix + strings.Join([]string{
-				strings.ToTitle(subSys), strings.ToTitle(madmin.EnableKey),
-			}, config.EnvWordDelimiter)
-			envHelp = append(envHelp, config.HelpKV{
-				Key:         envK,
-				Description: fmt.Sprintf("enable %s target, default is 'off'", subSys),
-				Optional:    false,
-				Type:        "on|off",
-			})
-		}
-		for _, hkv := range h {
-			envK := config.EnvPrefix + strings.Join([]string{
-				strings.ToTitle(subSys), strings.ToTitle(hkv.Key),
-			}, config.EnvWordDelimiter)
-			envHelp = append(envHelp, config.HelpKV{
-				Key:         envK,
-				Description: hkv.Description,
-				Optional:    hkv.Optional,
-				Type:        hkv.Type,
-			})
-		}
-		h = envHelp
-	}
-
-	return Help{
-		SubSys:          subSys,
-		Description:     subSysHelp.Description,
-		MultipleTargets: subSysHelp.MultipleTargets,
-		KeysHelp:        h,
-	}, nil
-}
-
-func newServerConfig() config.Config {
+func (gl *Globals) newServerConfig() config.Config {
 	return config.New()
 }
 
 // newSrvConfig - initialize a new server config, saves env parameters if
 // found, otherwise use default parameters
-func newSrvConfig(objAPI ObjectLayer) error {
+func (gl *Globals) newSrvConfig(objAPI ObjectLayer) error {
 	// Initialize server config.
-	srvCfg := newServerConfig()
+	srvCfg := gl.newServerConfig()
 
 	// hold the mutex lock before a new config is assigned.
-	globalServerConfigMu.Lock()
-	globalServerConfig = srvCfg
-	globalServerConfigMu.Unlock()
+	gl.ServerConfigMu.Lock()
+	gl.ServerConfig = srvCfg
+	gl.ServerConfigMu.Unlock()
 
 	// Save config into file.
-	return saveServerConfig(GlobalContext, objAPI, globalServerConfig)
+	return gl.saveServerConfig(GlobalContext, objAPI, gl.ServerConfig)
 }
 
-func getValidConfig(objAPI ObjectLayer) (config.Config, error) {
-	return readServerConfig(GlobalContext, objAPI)
+func (gl *Globals) getValidConfig(objAPI ObjectLayer) (config.Config, error) {
+	return gl.readServerConfig(GlobalContext, objAPI)
 }
 
 // loadConfig - loads a new config from disk, overrides params
 // from env if found and valid
-func loadConfig(objAPI ObjectLayer) error {
-	srvCfg, err := getValidConfig(objAPI)
+func (gl *Globals) loadConfig(objAPI ObjectLayer) error {
+	srvCfg, err := gl.getValidConfig(objAPI)
 	if err != nil {
 		return err
 	}
 
 	// Override any values from ENVs.
-	lookupConfigs(srvCfg, objAPI.SetDriveCounts())
+	gl.lookupConfigs(srvCfg, objAPI.SetDriveCounts())
 
 	// hold the mutex lock before a new config is assigned.
-	globalServerConfigMu.Lock()
-	globalServerConfig = srvCfg
-	globalServerConfigMu.Unlock()
+	gl.ServerConfigMu.Lock()
+	gl.ServerConfig = srvCfg
+	gl.ServerConfigMu.Unlock()
 
 	return nil
-}
-
-// getOpenIDValidators - returns ValidatorList which contains
-// enabled providers in server config.
-// A new authentication provider is added like below
-// * Add a new provider in pkg/iam/openid package.
-func getOpenIDValidators(cfg openid.Config) *openid.Validators {
-	validators := openid.NewValidators()
-
-	if cfg.JWKS.URL != nil {
-		validators.Add(openid.NewJWT(cfg))
-	}
-
-	return validators
 }

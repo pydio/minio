@@ -199,6 +199,7 @@ func newMappedPolicy(policy string) MappedPolicy {
 // IAMSys - config system.
 type IAMSys struct {
 	sync.Mutex
+	Globals *Globals
 
 	usersSysType UsersSysType
 
@@ -401,7 +402,7 @@ func (sys *IAMSys) doIAMConfigMigration(ctx context.Context) error {
 func (sys *IAMSys) InitStore(objAPI ObjectLayer) {
 	sys.Lock()
 	defer sys.Unlock()
-	sys.store = newIAMObjectStore(objAPI)
+	sys.store = newIAMObjectStore(sys.Globals, objAPI)
 }
 
 // Initialized check if IAM is initialized
@@ -593,7 +594,7 @@ func (sys *IAMSys) Init(ctx context.Context, objAPI ObjectLayer) {
 	}
 
 	// Invalidate the old cred always, even upon error to avoid any leakage.
-	globalOldCred = auth.Credentials{}
+	sys.Globals.OldCred = auth.Credentials{}
 	go sys.store.watch(ctx, sys)
 
 	logger.Info("IAM initialization complete")
@@ -1036,7 +1037,7 @@ func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, gro
 	sys.store.lock()
 	defer sys.store.unlock()
 
-	if parentUser == globalActiveCred.AccessKey {
+	if parentUser == sys.Globals.ActiveCred.AccessKey {
 		return auth.Credentials{}, errIAMActionNotAllowed
 	}
 
@@ -1083,9 +1084,9 @@ func (sys *IAMSys) NewServiceAccount(ctx context.Context, parentUser string, gro
 	)
 
 	if len(opts.accessKey) > 0 {
-		cred, err = auth.CreateNewCredentialsWithMetadata(opts.accessKey, opts.secretKey, m, globalActiveCred.SecretKey)
+		cred, err = auth.CreateNewCredentialsWithMetadata(opts.accessKey, opts.secretKey, m, sys.Globals.ActiveCred.SecretKey)
 	} else {
-		cred, err = auth.GetNewCredentialsWithMetadata(m, globalActiveCred.SecretKey)
+		cred, err = auth.GetNewCredentialsWithMetadata(m, sys.Globals.ActiveCred.SecretKey)
 	}
 	if err != nil {
 		return auth.Credentials{}, err
@@ -1150,7 +1151,7 @@ func (sys *IAMSys) UpdateServiceAccount(ctx context.Context, accessKey string, o
 		m[iampolicy.SessionPolicyName] = base64.StdEncoding.EncodeToString(policyBuf)
 		m[iamPolicyClaimNameSA()] = "embedded-policy"
 		m[parentClaim] = cr.ParentUser
-		cr.SessionToken, err = auth.JWTSignWithAccessKey(accessKey, m, globalActiveCred.SecretKey)
+		cr.SessionToken, err = auth.JWTSignWithAccessKey(accessKey, m, sys.Globals.ActiveCred.SecretKey)
 		if err != nil {
 			return err
 		}
@@ -1206,7 +1207,7 @@ func (sys *IAMSys) GetServiceAccount(ctx context.Context, accessKey string) (aut
 
 	var embeddedPolicy *iampolicy.Policy
 
-	jwtClaims, err := auth.ExtractClaims(sa.SessionToken, globalActiveCred.SecretKey)
+	jwtClaims, err := auth.ExtractClaims(sa.SessionToken, sys.Globals.ActiveCred.SecretKey)
 	if err == nil {
 		pt, ptok := jwtClaims.Lookup(iamPolicyClaimNameSA())
 		sp, spok := jwtClaims.Lookup(iampolicy.SessionPolicyName)
@@ -1914,88 +1915,6 @@ func (sys *IAMSys) IsAllowedServiceAccount(args iampolicy.Args, parent string) b
 	return combinedPolicy.IsAllowed(parentArgs) && subPolicy.IsAllowed(parentArgs)
 }
 
-// IsAllowedSTS is meant for STS based temporary credentials,
-// which implements claims validation and verification other than
-// applying policies.
-func (sys *IAMSys) IsAllowedSTS(args iampolicy.Args, parentUser string) bool {
-	policies, ok := args.GetPolicies(iamPolicyClaimNameOpenID())
-	if !ok {
-		// When claims are set, it should have a policy claim field.
-		return false
-	}
-
-	// When claims are set, it should have policies as claim.
-	if policies.IsEmpty() {
-		// No policy, no access!
-		return false
-	}
-
-	sys.store.rlock()
-	defer sys.store.runlock()
-
-	// If policy is available for given user, check the policy.
-	mp, ok := sys.iamUserPolicyMap[args.AccountName]
-	if !ok {
-		// No policy set for the user that we can find, no access!
-		return false
-	}
-
-	if !policies.Equals(mp.policySet()) {
-		// When claims has a policy, it should match the
-		// policy of args.AccountName which server remembers.
-		// if not reject such requests.
-		return false
-	}
-
-	var availablePolicies []iampolicy.Policy
-	for pname := range policies {
-		p, found := sys.iamPolicyDocsMap[pname]
-		if !found {
-			// all policies presented in the claim should exist
-			logger.LogIf(GlobalContext, fmt.Errorf("expected policy (%s) missing from the JWT claim %s, rejecting the request", pname, iamPolicyClaimNameOpenID()))
-			return false
-		}
-		availablePolicies = append(availablePolicies, p)
-	}
-
-	combinedPolicy := availablePolicies[0]
-	for i := 1; i < len(availablePolicies); i++ {
-		combinedPolicy.Statements = append(combinedPolicy.Statements,
-			availablePolicies[i].Statements...)
-	}
-
-	// Now check if we have a sessionPolicy.
-	spolicy, ok := args.Claims[iampolicy.SessionPolicyName]
-	if ok {
-		spolicyStr, ok := spolicy.(string)
-		if !ok {
-			// Sub policy if set, should be a string reject
-			// malformed/malicious requests.
-			return false
-		}
-
-		// Check if policy is parseable.
-		subPolicy, err := iampolicy.ParseConfig(bytes.NewReader([]byte(spolicyStr)))
-		if err != nil {
-			// Log any error in input session policy config.
-			logger.LogIf(GlobalContext, err)
-			return false
-		}
-
-		// Policy without Version string value reject it.
-		if subPolicy.Version == "" {
-			return false
-		}
-
-		// Sub policy is set and valid.
-		return combinedPolicy.IsAllowed(args) && subPolicy.IsAllowed(args)
-	}
-
-	// Sub policy not set, this is most common since subPolicy
-	// is optional, use the inherited policies.
-	return combinedPolicy.IsAllowed(args)
-}
-
 // GetCombinedPolicy returns a combined policy combining all policies
 func (sys *IAMSys) GetCombinedPolicy(policies ...string) iampolicy.Policy {
 	// Policies were found, evaluate all of them.
@@ -2036,7 +1955,7 @@ func (sys *IAMSys) IsAllowed(args iampolicy.Args) bool {
 		return false
 	}
 	if ok {
-		return sys.IsAllowedSTS(args, parentUser)
+		return false
 	}
 
 	// If the credential is for a service account, perform related check
@@ -2125,8 +2044,9 @@ func (sys *IAMSys) removeGroupFromMembershipsMap(group string) {
 }
 
 // NewIAMSys - creates new config system object.
-func NewIAMSys() *IAMSys {
+func NewIAMSys(g *Globals) *IAMSys {
 	return &IAMSys{
+		Globals:                 g,
 		usersSysType:            MinIOUsersSysType,
 		iamUsersMap:             make(map[string]auth.Credentials),
 		iamPolicyDocsMap:        make(map[string]iampolicy.Policy),

@@ -31,13 +31,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/colinmarc/hdfs/v2"
+	hdfs "github.com/colinmarc/hdfs/v2"
 	"github.com/colinmarc/hdfs/v2/hadoopconf"
 	krb "github.com/jcmturner/gokrb5/v8/client"
 	"github.com/jcmturner/gokrb5/v8/config"
 	"github.com/jcmturner/gokrb5/v8/credentials"
 	"github.com/jcmturner/gokrb5/v8/keytab"
 	"github.com/minio/cli"
+
 	"github.com/minio/minio-go/v7/pkg/s3utils"
 	minio "github.com/minio/minio/cmd"
 	"github.com/minio/minio/cmd/logger"
@@ -158,7 +159,7 @@ func getKerberosClient() (*krb.Client, error) {
 }
 
 // NewGatewayLayer returns hdfs gatewaylayer.
-func (g *HDFS) NewGatewayLayer(creds auth.Credentials) (minio.ObjectLayer, error) {
+func (g *HDFS) NewGatewayLayer(_ *minio.Globals, creds auth.Credentials) (minio.ObjectLayer, error) {
 	dialFunc := (&net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,

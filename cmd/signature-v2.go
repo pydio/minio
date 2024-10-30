@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha1"
 	"crypto/subtle"
@@ -29,7 +30,6 @@ import (
 	"strings"
 
 	xhttp "github.com/minio/minio/cmd/http"
-
 	"github.com/minio/minio/pkg/auth"
 )
 
@@ -75,9 +75,9 @@ const (
 
 // AWS S3 Signature V2 calculation rule is give here:
 // http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationStringToSign
-func doesPolicySignatureV2Match(formValues http.Header) (auth.Credentials, APIErrorCode) {
+func doesPolicySignatureV2Match(ctx context.Context, formValues http.Header) (auth.Credentials, APIErrorCode) {
 	accessKey := formValues.Get(xhttp.AmzAccessKeyID)
-	cred, _, s3Err := checkKeyValid(accessKey)
+	cred, _, s3Err := checkKeyValid(ctx, accessKey)
 	if s3Err != ErrNone {
 		return cred, s3Err
 	}
@@ -104,7 +104,8 @@ func unescapeQueries(encodedQuery string) (unescapedQueries []string, err error)
 }
 
 // doesPresignV2SignatureMatch - Verify query headers with presigned signature
-//     - http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
+//   - http://docs.aws.amazon.com/AmazonS3/latest/dev/RESTAuthentication.html#RESTAuthenticationQueryStringAuth
+//
 // returns ErrNone if matches. S3 errors otherwise.
 func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
 	// r.RequestURI will have raw encoded URI as sent by the client.
@@ -152,7 +153,7 @@ func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
 		return ErrInvalidQueryParams
 	}
 
-	cred, _, s3Err := checkKeyValid(accessKey)
+	cred, _, s3Err := checkKeyValid(r.Context(), accessKey)
 	if s3Err != ErrNone {
 		return s3Err
 	}
@@ -167,8 +168,8 @@ func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
 	if expiresInt < UTCNow().Unix() {
 		return ErrExpiredPresignRequest
 	}
-
-	encodedResource, err = getResource(encodedResource, r.Host, globalDomainNames)
+	globals := mustGlobalsFromContext(r.Context())
+	encodedResource, err = getResource(encodedResource, r.Host, globals.DomainNames)
 	if err != nil {
 		return ErrInvalidRequest
 	}
@@ -183,7 +184,7 @@ func doesPresignV2SignatureMatch(r *http.Request) APIErrorCode {
 
 func getReqAccessKeyV2(r *http.Request) (auth.Credentials, bool, APIErrorCode) {
 	if accessKey := r.URL.Query().Get(xhttp.AmzAccessKeyID); accessKey != "" {
-		return checkKeyValid(accessKey)
+		return checkKeyValid(r.Context(), accessKey)
 	}
 
 	// below is V2 Signed Auth header format, splitting on `space` (after the `AWS` string).
@@ -199,7 +200,7 @@ func getReqAccessKeyV2(r *http.Request) (auth.Credentials, bool, APIErrorCode) {
 		return auth.Credentials{}, false, ErrMissingFields
 	}
 
-	return checkKeyValid(keySignFields[0])
+	return checkKeyValid(r.Context(), keySignFields[0])
 }
 
 // Authorization = "AWS" + " " + AWSAccessKeyId + ":" + Signature;
@@ -262,7 +263,8 @@ func doesSignV2Match(r *http.Request) APIErrorCode {
 		return ErrInvalidQueryParams
 	}
 
-	encodedResource, err = getResource(encodedResource, r.Host, globalDomainNames)
+	globals := mustGlobalsFromContext(r.Context())
+	encodedResource, err = getResource(encodedResource, r.Host, globals.DomainNames)
 	if err != nil {
 		return ErrInvalidRequest
 	}

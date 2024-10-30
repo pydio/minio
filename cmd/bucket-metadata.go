@@ -109,13 +109,13 @@ func newBucketMetadata(name string) BucketMetadata {
 
 // Load - loads the metadata of bucket by name from ObjectLayer api.
 // If an error is returned the returned metadata will be default initialized.
-func (b *BucketMetadata) Load(ctx context.Context, api ObjectLayer, name string) error {
+func (b *BucketMetadata) Load(ctx context.Context, globals *Globals, api ObjectLayer, name string) error {
 	if name == "" {
 		logger.LogIf(ctx, errors.New("bucket name cannot be empty"))
 		return errors.New("bucket name cannot be empty")
 	}
 	configFile := path.Join(bucketConfigPrefix, name, bucketMetadataFile)
-	data, err := readConfig(ctx, api, configFile)
+	data, err := globals.readConfig(ctx, api, configFile)
 	if err != nil {
 		return err
 	}
@@ -140,15 +140,15 @@ func (b *BucketMetadata) Load(ctx context.Context, api ObjectLayer, name string)
 }
 
 // loadBucketMetadata loads and migrates to bucket metadata.
-func loadBucketMetadata(ctx context.Context, objectAPI ObjectLayer, bucket string) (BucketMetadata, error) {
+func loadBucketMetadata(ctx context.Context, globals *Globals, objectAPI ObjectLayer, bucket string) (BucketMetadata, error) {
 	b := newBucketMetadata(bucket)
-	err := b.Load(ctx, objectAPI, b.Name)
+	err := b.Load(ctx, globals, objectAPI, b.Name)
 	if err != nil && !errors.Is(err, errConfigNotFound) {
 		return b, err
 	}
 
 	// Old bucket without bucket metadata. Hence we migrate existing settings.
-	if err := b.convertLegacyConfigs(ctx, objectAPI); err != nil {
+	if err := b.convertLegacyConfigs(ctx, globals, objectAPI); err != nil {
 		return b, err
 	}
 	// migrate unencrypted remote targets
@@ -247,7 +247,7 @@ func (b *BucketMetadata) parseAllConfigs(ctx context.Context, objectAPI ObjectLa
 	return nil
 }
 
-func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI ObjectLayer) error {
+func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, globals *Globals, objectAPI ObjectLayer) error {
 	legacyConfigs := []string{
 		legacyBucketObjectLockEnabledConfigFile,
 		bucketPolicyConfig,
@@ -273,7 +273,7 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 	for _, legacyFile := range legacyConfigs {
 		configFile := path.Join(bucketConfigPrefix, b.Name, legacyFile)
 
-		configData, err := readConfig(ctx, objectAPI, configFile)
+		configData, err := globals.readConfig(ctx, objectAPI, configFile)
 		if err != nil {
 			switch err.(type) {
 			case ObjectExistsAsDirectory:
@@ -327,13 +327,13 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 		}
 	}
 
-	if err := b.Save(ctx, objectAPI); err != nil {
+	if err := b.Save(ctx, globals, objectAPI); err != nil {
 		return err
 	}
 
 	for legacyFile := range configs {
 		configFile := path.Join(bucketConfigPrefix, b.Name, legacyFile)
-		if err := deleteConfig(ctx, objectAPI, configFile); err != nil && !errors.Is(err, errConfigNotFound) {
+		if err := globals.deleteConfig(ctx, objectAPI, configFile); err != nil && !errors.Is(err, errConfigNotFound) {
 			logger.LogIf(ctx, err)
 		}
 	}
@@ -342,7 +342,7 @@ func (b *BucketMetadata) convertLegacyConfigs(ctx context.Context, objectAPI Obj
 }
 
 // Save config to supplied ObjectLayer api.
-func (b *BucketMetadata) Save(ctx context.Context, api ObjectLayer) error {
+func (b *BucketMetadata) Save(ctx context.Context, globals *Globals, api ObjectLayer) error {
 	if err := b.parseAllConfigs(ctx, api); err != nil {
 		return err
 	}
@@ -360,19 +360,19 @@ func (b *BucketMetadata) Save(ctx context.Context, api ObjectLayer) error {
 	}
 
 	configFile := path.Join(bucketConfigPrefix, b.Name, bucketMetadataFile)
-	return saveConfig(ctx, api, configFile, data)
+	return globals.saveConfig(ctx, api, configFile, data)
 }
 
 // deleteBucketMetadata deletes bucket metadata
 // If config does not exist no error is returned.
-func deleteBucketMetadata(ctx context.Context, obj objectDeleter, bucket string) error {
+func deleteBucketMetadata(ctx context.Context, globals *Globals, obj objectDeleter, bucket string) error {
 	metadataFiles := []string{
 		dataUsageCacheName,
 		bucketMetadataFile,
 	}
 	for _, metaFile := range metadataFiles {
 		configFile := path.Join(bucketConfigPrefix, bucket, metaFile)
-		if err := deleteConfig(ctx, obj, configFile); err != nil && err != errConfigNotFound {
+		if err := globals.deleteConfig(ctx, obj, configFile); err != nil && err != errConfigNotFound {
 			return err
 		}
 	}

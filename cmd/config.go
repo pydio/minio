@@ -21,11 +21,10 @@ import (
 	"context"
 	"encoding/json"
 	"path"
-	"sort"
-	"strings"
 	"unicode/utf8"
 
 	jsoniter "github.com/json-iterator/go"
+
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/pkg/madmin"
 )
@@ -42,98 +41,14 @@ const (
 	minioConfigFile = "config.json"
 )
 
-func listServerConfigHistory(ctx context.Context, objAPI ObjectLayer, withData bool, count int) (
-	[]madmin.ConfigHistoryEntry, error) {
-
-	var configHistory []madmin.ConfigHistoryEntry
-
-	// List all kvs
-	marker := ""
-	for {
-		res, err := objAPI.ListObjects(ctx, minioMetaBucket, minioConfigHistoryPrefix, marker, "", maxObjectList)
-		if err != nil {
-			return nil, err
-		}
-		for _, obj := range res.Objects {
-			cfgEntry := madmin.ConfigHistoryEntry{
-				RestoreID:  strings.TrimSuffix(path.Base(obj.Name), kvPrefix),
-				CreateTime: obj.ModTime, // ModTime is createTime for config history entries.
-			}
-			if withData {
-				data, err := readConfig(ctx, objAPI, obj.Name)
-				if err != nil {
-					return nil, err
-				}
-				if globalConfigEncrypted && !utf8.Valid(data) {
-					data, err = madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(data))
-					if err != nil {
-						return nil, err
-					}
-				}
-				cfgEntry.Data = string(data)
-			}
-			configHistory = append(configHistory, cfgEntry)
-			count--
-			if count == 0 {
-				break
-			}
-		}
-		if !res.IsTruncated {
-			// We are done here
-			break
-		}
-		marker = res.NextMarker
-	}
-	sort.Slice(configHistory, func(i, j int) bool {
-		return configHistory[i].CreateTime.Before(configHistory[j].CreateTime)
-	})
-	return configHistory, nil
-}
-
-func delServerConfigHistory(ctx context.Context, objAPI ObjectLayer, uuidKV string) error {
-	historyFile := pathJoin(minioConfigHistoryPrefix, uuidKV+kvPrefix)
-	_, err := objAPI.DeleteObject(ctx, minioMetaBucket, historyFile, ObjectOptions{})
-	return err
-}
-
-func readServerConfigHistory(ctx context.Context, objAPI ObjectLayer, uuidKV string) ([]byte, error) {
-	historyFile := pathJoin(minioConfigHistoryPrefix, uuidKV+kvPrefix)
-	data, err := readConfig(ctx, objAPI, historyFile)
-	if err != nil {
-		return nil, err
-	}
-
-	if globalConfigEncrypted && !utf8.Valid(data) {
-		data, err = madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(data))
-	}
-
-	return data, err
-}
-
-func saveServerConfigHistory(ctx context.Context, objAPI ObjectLayer, kv []byte) error {
-	uuidKV := mustGetUUID() + kvPrefix
-	historyFile := pathJoin(minioConfigHistoryPrefix, uuidKV)
-
-	var err error
-	if globalConfigEncrypted {
-		kv, err = madmin.EncryptData(globalActiveCred.String(), kv)
-		if err != nil {
-			return err
-		}
-	}
-
-	// Save the new config KV settings into the history path.
-	return saveConfig(ctx, objAPI, historyFile, kv)
-}
-
-func saveServerConfig(ctx context.Context, objAPI ObjectLayer, config interface{}) error {
+func (gl *Globals) saveServerConfig(ctx context.Context, objAPI ObjectLayer, config interface{}) error {
 	data, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
 
-	if globalConfigEncrypted {
-		data, err = madmin.EncryptData(globalActiveCred.String(), data)
+	if gl.ConfigEncrypted {
+		data, err = madmin.EncryptData(gl.ActiveCred.String(), data)
 		if err != nil {
 			return err
 		}
@@ -141,23 +56,23 @@ func saveServerConfig(ctx context.Context, objAPI ObjectLayer, config interface{
 
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
 	// Save the new config in the std config path
-	return saveConfig(ctx, objAPI, configFile, data)
+	return gl.saveConfig(ctx, objAPI, configFile, data)
 }
 
-func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, error) {
+func (gl *Globals) readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, error) {
 	configFile := path.Join(minioConfigPrefix, minioConfigFile)
-	configData, err := readConfig(ctx, objAPI, configFile)
+	configData, err := gl.readConfig(ctx, objAPI, configFile)
 	if err != nil {
 		// Config not found for some reason, allow things to continue
 		// by initializing a new fresh config in safe mode.
-		if err == errConfigNotFound && newObjectLayerFn() == nil {
-			return newServerConfig(), nil
+		if err == errConfigNotFound && gl.newObjectLayerFn() == nil {
+			return gl.newServerConfig(), nil
 		}
 		return nil, err
 	}
 
-	if globalConfigEncrypted && !utf8.Valid(configData) {
-		configData, err = madmin.DecryptData(globalActiveCred.String(), bytes.NewReader(configData))
+	if gl.ConfigEncrypted && !utf8.Valid(configData) {
+		configData, err = madmin.DecryptData(gl.ActiveCred.String(), bytes.NewReader(configData))
 		if err != nil {
 			if err == madmin.ErrMaliciousData {
 				return nil, config.ErrInvalidCredentialsBackendEncrypted(nil)
@@ -177,7 +92,9 @@ func readServerConfig(ctx context.Context, objAPI ObjectLayer) (config.Config, e
 }
 
 // ConfigSys - config system.
-type ConfigSys struct{}
+type ConfigSys struct {
+	*Globals
+}
 
 // Load - load config.json.
 func (sys *ConfigSys) Load(objAPI ObjectLayer) error {
@@ -190,22 +107,22 @@ func (sys *ConfigSys) Init(objAPI ObjectLayer) error {
 		return errInvalidArgument
 	}
 
-	return initConfig(objAPI)
+	return sys.initConfig(objAPI)
 }
 
 // NewConfigSys - creates new config system object.
-func NewConfigSys() *ConfigSys {
-	return &ConfigSys{}
+func NewConfigSys(g *Globals) *ConfigSys {
+	return &ConfigSys{Globals: g}
 }
 
 // Initialize and load config from remote etcd or local config directory
-func initConfig(objAPI ObjectLayer) error {
+func (gl *Globals) initConfig(objAPI ObjectLayer) error {
 	if objAPI == nil {
 		return errServerNotInitialized
 	}
 
-	if isFile(getConfigFile()) {
-		if err := migrateConfig(); err != nil {
+	if isFile(gl.getConfigFile()) {
+		if err := gl.migrateConfig(); err != nil {
 			return err
 		}
 	}
@@ -215,20 +132,20 @@ func initConfig(objAPI ObjectLayer) error {
 	// ignore if the file doesn't exist.
 	// If etcd is set then migrates /config/config.json
 	// to '<export_path>/.minio.sys/config/config.json'
-	if err := migrateConfigToMinioSys(objAPI); err != nil {
+	if err := gl.migrateConfigToMinioSys(objAPI); err != nil {
 		return err
 	}
 
 	// Migrates backend '<export_path>/.minio.sys/config/config.json' to latest version.
-	if err := migrateMinioSysConfig(objAPI); err != nil {
+	if err := gl.migrateMinioSysConfig(objAPI); err != nil {
 		return err
 	}
 
 	// Migrates backend '<export_path>/.minio.sys/config/config.json' to
 	// latest config format.
-	if err := migrateMinioSysConfigToKV(objAPI); err != nil {
+	if err := gl.migrateMinioSysConfigToKV(objAPI); err != nil {
 		return err
 	}
 
-	return loadConfig(objAPI)
+	return gl.loadConfig(objAPI)
 }

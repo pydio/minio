@@ -18,6 +18,7 @@ package cmd
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -45,13 +46,13 @@ func setEventStreamHeaders(w http.ResponseWriter) {
 }
 
 // Write http common headers
-func setCommonHeaders(w http.ResponseWriter) {
+func setCommonHeaders(ctx context.Context, w http.ResponseWriter) {
 	// Set the "Server" http header.
-	w.Header().Set(xhttp.ServerInfo, "MinIO")
+	w.Header().Set(xhttp.ServerInfo, "Pydio")
 
 	// Set `x-amz-bucket-region` only if region is set on the server
 	// by default minio uses an empty region.
-	if region := globalServerRegion; region != "" {
+	if region := mustGlobalsFromContext(ctx).ServerRegion; region != "" {
 		w.Header().Set(xhttp.AmzBucketRegion, region)
 	}
 	w.Header().Set(xhttp.AcceptRanges, "bytes")
@@ -85,9 +86,9 @@ func setPartsCountHeaders(w http.ResponseWriter, objInfo ObjectInfo) {
 }
 
 // Write object header
-func setObjectHeaders(w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSpec, opts ObjectOptions) (err error) {
+func setObjectHeaders(ctx context.Context, w http.ResponseWriter, objInfo ObjectInfo, rs *HTTPRangeSpec, opts ObjectOptions) (err error) {
 	// set common headers
-	setCommonHeaders(w)
+	setCommonHeaders(ctx, w)
 
 	// Set last modified time.
 	lastModified := objInfo.ModTime.UTC().Format(http.TimeFormat)

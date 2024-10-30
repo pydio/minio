@@ -132,14 +132,14 @@ func getOpts(ctx context.Context, r *http.Request, bucket, object string) (Objec
 	return opts, nil
 }
 
-func delOpts(ctx context.Context, r *http.Request, bucket, object string) (opts ObjectOptions, err error) {
-	versioned := globalBucketVersioningSys.Enabled(bucket)
+func (api objectAPIHandlers) delOpts(ctx context.Context, r *http.Request, bucket, object string) (opts ObjectOptions, err error) {
+	versioned := api.BucketVersioningSys.Enabled(bucket)
 	opts, err = getOpts(ctx, r, bucket, object)
 	if err != nil {
 		return opts, err
 	}
 	opts.Versioned = versioned
-	opts.VersionSuspended = globalBucketVersioningSys.Suspended(bucket)
+	opts.VersionSuspended = api.BucketVersioningSys.Suspended(bucket)
 	delMarker := strings.TrimSpace(r.Header.Get(xhttp.MinIOSourceDeleteMarker))
 	if delMarker != "" {
 		switch delMarker {
@@ -191,8 +191,8 @@ func delOpts(ctx context.Context, r *http.Request, bucket, object string) (opts 
 }
 
 // get ObjectOptions for PUT calls from encryption headers and metadata
-func putOpts(ctx context.Context, r *http.Request, bucket, object string, metadata map[string]string) (opts ObjectOptions, err error) {
-	versioned := globalBucketVersioningSys.Enabled(bucket)
+func (api objectAPIHandlers) putOpts(ctx context.Context, r *http.Request, bucket, object string, metadata map[string]string) (opts ObjectOptions, err error) {
+	versioned := api.BucketVersioningSys.Enabled(bucket)
 	vid := strings.TrimSpace(r.URL.Query().Get(xhttp.VersionID))
 	if vid != "" && vid != nullVersionID {
 		_, err := uuid.Parse(vid)
@@ -261,12 +261,12 @@ func putOpts(ctx context.Context, r *http.Request, bucket, object string, metada
 }
 
 // get ObjectOptions for Copy calls with encryption headers provided on the target side and source side metadata
-func copyDstOpts(ctx context.Context, r *http.Request, bucket, object string, metadata map[string]string) (opts ObjectOptions, err error) {
-	return putOpts(ctx, r, bucket, object, metadata)
+func (api objectAPIHandlers) copyDstOpts(ctx context.Context, r *http.Request, bucket, object string, metadata map[string]string) (opts ObjectOptions, err error) {
+	return api.putOpts(ctx, r, bucket, object, metadata)
 }
 
 // get ObjectOptions for Copy calls with encryption headers provided on the source side
-func copySrcOpts(ctx context.Context, r *http.Request, bucket, object string) (ObjectOptions, error) {
+func (api objectAPIHandlers) copySrcOpts(ctx context.Context, r *http.Request, bucket, object string) (ObjectOptions, error) {
 	var (
 		opts ObjectOptions
 	)

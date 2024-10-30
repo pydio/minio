@@ -38,6 +38,7 @@ import (
 // NotificationSys - notification system.
 type NotificationSys struct {
 	sync.RWMutex
+	*Globals
 	targetList                 *event.TargetList
 	targetResCh                chan event.TargetIDResult
 	bucketRulesMap             map[string]event.RulesMap
@@ -50,7 +51,7 @@ func (sys *NotificationSys) GetARNList(onlyActive bool) []string {
 	if sys == nil {
 		return arns
 	}
-	region := globalServerRegion
+	region := sys.Globals.ServerRegion
 	for targetID, target := range sys.targetList.TargetMap() {
 		// httpclient target is part of ListenNotification
 		// which doesn't need to be listed as part of the ARN list
@@ -154,15 +155,11 @@ func (sys *NotificationSys) LoadBucketMetadata(ctx context.Context, bucketName s
 
 // DeleteBucketMetadata - calls DeleteBucketMetadata call on all peers
 func (sys *NotificationSys) DeleteBucketMetadata(ctx context.Context, bucketName string) {
-	globalReplicationStats.Delete(bucketName)
-	globalBucketMetadataSys.Remove(bucketName)
+	sys.Globals.BucketMetadataSys.Remove(bucketName)
 }
 
 // GetClusterBucketStats - calls GetClusterBucketStats call on all peers for a cluster statistics view.
 func (sys *NotificationSys) GetClusterBucketStats(ctx context.Context, bucketName string) (bucketStats []BucketStats) {
-	bucketStats = append(bucketStats, BucketStats{
-		ReplicationStats: globalReplicationStats.Get(bucketName),
-	})
 	return bucketStats
 }
 
@@ -170,13 +167,13 @@ func (sys *NotificationSys) GetClusterBucketStats(ctx context.Context, bucketNam
 func (sys *NotificationSys) load(buckets []BucketInfo) {
 	for _, bucket := range buckets {
 		ctx := logger.SetReqInfo(GlobalContext, &logger.ReqInfo{BucketName: bucket.Name})
-		config, err := globalBucketMetadataSys.GetNotificationConfig(bucket.Name)
+		config, err := sys.Globals.BucketMetadataSys.GetNotificationConfig(bucket.Name)
 		if err != nil {
 			logger.LogIf(ctx, err)
 			continue
 		}
-		config.SetRegion(globalServerRegion)
-		if err = config.Validate(globalServerRegion, globalNotificationSys.targetList); err != nil {
+		config.SetRegion(sys.Globals.ServerRegion)
+		if err = config.Validate(sys.Globals.ServerRegion, sys.Globals.NotificationSys.targetList); err != nil {
 			if _, ok := err.(*event.ErrARNNotFound); !ok {
 				logger.LogIf(ctx, err)
 			}
@@ -193,11 +190,11 @@ func (sys *NotificationSys) Init(ctx context.Context, buckets []BucketInfo, objA
 	}
 
 	// In gateway mode, notifications are not supported - except NAS gateway.
-	if globalIsGateway && !objAPI.IsNotificationSupported() {
+	if sys.Globals.IsGateway && !objAPI.IsNotificationSupported() {
 		return nil
 	}
 
-	logger.LogIf(ctx, sys.targetList.Add(globalConfigTargetList.Targets()...))
+	logger.LogIf(ctx, sys.targetList.Add(sys.Globals.ConfigTargetList.Targets()...))
 
 	go func() {
 		for res := range sys.targetResCh {
@@ -254,7 +251,7 @@ func (sys *NotificationSys) ConfiguredTargetIDs() []event.TargetID {
 	// Filter out targets configured via env
 	var tIDs []event.TargetID
 	for _, targetID := range targetIDs {
-		if !globalEnvTargetList.Exists(targetID) {
+		if !sys.Globals.EnvTargetList.Exists(targetID) {
 			tIDs = append(tIDs, targetID)
 		}
 	}
@@ -285,12 +282,13 @@ func (sys *NotificationSys) Send(args eventArgs) {
 		return
 	}
 
-	sys.targetList.Send(args.ToEvent(true), targetIDSet, sys.targetResCh)
+	sys.targetList.Send(args.ToEvent(true, sys.Globals), targetIDSet, sys.targetResCh)
 }
 
 // NewNotificationSys - creates new notification system object.
-func NewNotificationSys(endpoints EndpointServerPools) *NotificationSys {
+func NewNotificationSys(globals *Globals) *NotificationSys {
 	return &NotificationSys{
+		Globals:                    globals,
 		targetList:                 event.NewTargetList(),
 		targetResCh:                make(chan event.TargetIDResult),
 		bucketRulesMap:             make(map[string]event.RulesMap),
@@ -316,17 +314,17 @@ type eventArgs struct {
 }
 
 // ToEvent - converts to notification event.
-func (args eventArgs) ToEvent(escape bool) event.Event {
+func (args eventArgs) ToEvent(escape bool, globals *Globals) event.Event {
 	eventTime := UTCNow()
 	uniqueID := fmt.Sprintf("%X", eventTime.UnixNano())
 
 	respElements := map[string]string{
 		"x-amz-request-id":        args.RespElements["requestId"],
-		"x-minio-origin-endpoint": globalMinioEndpoint, // MinIO specific custom elements.
+		"x-minio-origin-endpoint": globals.MinioEndpoint, // MinIO specific custom elements.
 	}
 	// Add deployment as part of
-	if globalDeploymentID != "" {
-		respElements["x-minio-deployment-id"] = globalDeploymentID
+	if globals.DeploymentID != "" {
+		respElements["x-minio-deployment-id"] = globals.DeploymentID
 	}
 	if args.RespElements["content-length"] != "" {
 		respElements["content-length"] = args.RespElements["content-length"]
@@ -374,7 +372,7 @@ func (args eventArgs) ToEvent(escape bool) event.Event {
 	return newEvent
 }
 
-func sendEvent(args eventArgs) {
+func sendEvent(globals *Globals, args eventArgs) {
 	args.Object.Size, _ = args.Object.GetActualSize()
 
 	// avoid generating a notification for REPLICA creation event.
@@ -386,21 +384,21 @@ func sendEvent(args eventArgs) {
 	crypto.RemoveInternalEntries(args.Object.UserDefined)
 
 	// globalNotificationSys is not initialized in gateway mode.
-	if globalNotificationSys == nil {
+	if globals.NotificationSys == nil {
 		return
 	}
 
-	if globalHTTPListen.NumSubscribers() > 0 {
-		globalHTTPListen.Publish(args.ToEvent(false))
+	if globals.HTTPListen.NumSubscribers() > 0 {
+		globals.HTTPListen.Publish(args.ToEvent(false, globals))
 	}
 
-	globalNotificationSys.Send(args)
+	globals.NotificationSys.Send(args)
 }
 
 // GetBandwidthReports - gets the bandwidth report from all nodes including self.
 func (sys *NotificationSys) GetBandwidthReports(ctx context.Context, buckets ...string) bandwidth.Report {
 	var reports []*bandwidth.Report
-	reports = append(reports, globalBucketMonitor.GetReport(bucketBandwidth.SelectBuckets(buckets...)))
+	reports = append(reports, sys.Globals.BucketMonitor.GetReport(bucketBandwidth.SelectBuckets(buckets...)))
 	consolidatedReport := bandwidth.Report{
 		BucketStats: make(map[string]bandwidth.Details),
 	}

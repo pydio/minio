@@ -64,16 +64,8 @@ func getDefaultCertsCADir() string {
 
 var (
 	// Default config, certs and CA directories.
-	defaultConfigDir  = &ConfigDir{path: getDefaultConfigDir()}
-	defaultCertsDir   = &ConfigDir{path: getDefaultCertsDir()}
-	defaultCertsCADir = &ConfigDir{path: getDefaultCertsCADir()}
-
-	// Points to current configuration directory -- deprecated, to be removed in future.
-	globalConfigDir = defaultConfigDir
-	// Points to current certs directory set by user with --certs-dir
-	globalCertsDir = defaultCertsDir
-	// Points to relative path to certs directory and is <value-of-certs-dir>/CAs
-	globalCertsCADir = defaultCertsCADir
+	defaultConfigDir = &ConfigDir{path: getDefaultConfigDir()}
+	defaultCertsDir  = &ConfigDir{path: getDefaultCertsDir()}
 )
 
 // Get - returns current directory.
@@ -94,14 +86,14 @@ func mkdirAllIgnorePerm(path string) error {
 	return err
 }
 
-func getConfigFile() string {
-	return filepath.Join(globalConfigDir.Get(), minioConfigFile)
+func (g *Globals) getConfigFile() string {
+	return filepath.Join(g.CliContext.ConfigDir.Get(), minioConfigFile)
 }
 
-func getPublicCertFile() string {
-	return filepath.Join(globalCertsDir.Get(), publicCertFile)
+func (g *Globals) getPublicCertFile() string {
+	return filepath.Join(g.CliContext.CertsDir.Get(), publicCertFile)
 }
 
-func getPrivateKeyFile() string {
-	return filepath.Join(globalCertsDir.Get(), privateKeyFile)
+func (g *Globals) getPrivateKeyFile() string {
+	return filepath.Join(g.CliContext.CertsDir.Get(), privateKeyFile)
 }

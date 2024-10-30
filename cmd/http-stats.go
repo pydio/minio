@@ -18,12 +18,10 @@ package cmd
 
 import (
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/minio/minio/cmd/logger"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 // ConnStats - Network statistics
@@ -180,24 +178,20 @@ func (st *HTTPStats) updateStats(api string, r *http.Request, w *logger.Response
 	// A successful request has a 2xx response code
 	successReq := w.StatusCode >= 200 && w.StatusCode < 300
 
-	if !strings.HasSuffix(r.URL.Path, prometheusMetricsPathLegacy) ||
-		!strings.HasSuffix(r.URL.Path, prometheusMetricsV2ClusterPath) ||
-		!strings.HasSuffix(r.URL.Path, prometheusMetricsV2NodePath) {
-		st.totalS3Requests.Inc(api)
-		if !successReq {
-			switch w.StatusCode {
-			case 0:
-			case 499:
-				// 499 is a good error, shall be counted at canceled.
-				st.totalS3Canceled.Inc(api)
-			default:
-				st.totalS3Errors.Inc(api)
-			}
+	st.totalS3Requests.Inc(api)
+	if !successReq {
+		switch w.StatusCode {
+		case 0:
+		case 499:
+			// 499 is a good error, shall be counted at canceled.
+			st.totalS3Canceled.Inc(api)
+		default:
+			st.totalS3Errors.Inc(api)
 		}
 	}
 
 	// Increment the prometheus http request response histogram with appropriate label
-	httpRequestsDuration.With(prometheus.Labels{"api": api}).Observe(w.TimeToFirstByte.Seconds())
+	//httpRequestsDuration.With(prometheus.Labels{"api": api}).Observe(w.TimeToFirstByte.Seconds())
 }
 
 // Prepare new HTTPStats structure
