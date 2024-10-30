@@ -22,7 +22,6 @@ import (
 	"github.com/minio/minio/cmd/config"
 	"github.com/minio/minio/cmd/config/cache"
 	"github.com/minio/minio/cmd/config/compress"
-	xldap "github.com/minio/minio/cmd/config/identity/ldap"
 	"github.com/minio/minio/cmd/config/identity/openid"
 	"github.com/minio/minio/cmd/config/notify"
 	"github.com/minio/minio/cmd/config/policy/opa"
@@ -30,18 +29,17 @@ import (
 	"github.com/minio/minio/cmd/crypto"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
-	"github.com/minio/minio/pkg/event/target"
 	"github.com/minio/minio/pkg/quick"
 )
 
-/////////////////// Config V1 ///////////////////
+// ///////////////// Config V1 ///////////////////
 type configV1 struct {
 	Version   string `json:"version"`
 	AccessKey string `json:"accessKeyId"`
 	SecretKey string `json:"secretAccessKey"`
 }
 
-/////////////////// Config V2 ///////////////////
+// ///////////////// Config V2 ///////////////////
 type configV2 struct {
 	Version     string `json:"version"`
 	Credentials struct {
@@ -63,7 +61,7 @@ type configV2 struct {
 	} `json:"fileLogger"`
 }
 
-/////////////////// Config V3 ///////////////////
+// ///////////////// Config V3 ///////////////////
 // backendV3 type.
 type backendV3 struct {
 	Type  string   `json:"type"`
@@ -238,23 +236,23 @@ type configV6 struct {
 // Notifier represents collection of supported notification queues in version
 // 1 without NATS streaming.
 type notifierV1 struct {
-	AMQP          map[string]target.AMQPArgs          `json:"amqp"`
-	NATS          map[string]natsNotifyV1             `json:"nats"`
-	ElasticSearch map[string]target.ElasticsearchArgs `json:"elasticsearch"`
-	Redis         map[string]target.RedisArgs         `json:"redis"`
-	PostgreSQL    map[string]target.PostgreSQLArgs    `json:"postgresql"`
-	Kafka         map[string]target.KafkaArgs         `json:"kafka"`
+	AMQP          map[string]any `json:"amqp"`
+	NATS          map[string]any `json:"nats"`
+	ElasticSearch map[string]any `json:"elasticsearch"`
+	Redis         map[string]any `json:"redis"`
+	PostgreSQL    map[string]any `json:"postgresql"`
+	Kafka         map[string]any `json:"kafka"`
 }
 
 // Notifier represents collection of supported notification queues in version 2
 // with NATS streaming but without webhook.
 type notifierV2 struct {
-	AMQP          map[string]target.AMQPArgs          `json:"amqp"`
-	NATS          map[string]target.NATSArgs          `json:"nats"`
-	ElasticSearch map[string]target.ElasticsearchArgs `json:"elasticsearch"`
-	Redis         map[string]target.RedisArgs         `json:"redis"`
-	PostgreSQL    map[string]target.PostgreSQLArgs    `json:"postgresql"`
-	Kafka         map[string]target.KafkaArgs         `json:"kafka"`
+	AMQP          map[string]any `json:"amqp"`
+	NATS          map[string]any `json:"nats"`
+	ElasticSearch map[string]any `json:"elasticsearch"`
+	Redis         map[string]any `json:"redis"`
+	PostgreSQL    map[string]any `json:"postgresql"`
+	Kafka         map[string]any `json:"kafka"`
 }
 
 // configV7 server configuration version '7'.
@@ -372,15 +370,15 @@ type serverConfigV12 struct {
 }
 
 type notifierV3 struct {
-	AMQP          map[string]target.AMQPArgs          `json:"amqp"`
-	Elasticsearch map[string]target.ElasticsearchArgs `json:"elasticsearch"`
-	Kafka         map[string]target.KafkaArgs         `json:"kafka"`
-	MQTT          map[string]target.MQTTArgs          `json:"mqtt"`
-	MySQL         map[string]target.MySQLArgs         `json:"mysql"`
-	NATS          map[string]target.NATSArgs          `json:"nats"`
-	PostgreSQL    map[string]target.PostgreSQLArgs    `json:"postgresql"`
-	Redis         map[string]target.RedisArgs         `json:"redis"`
-	Webhook       map[string]target.WebhookArgs       `json:"webhook"`
+	AMQP          map[string]any `json:"amqp"`
+	Elasticsearch map[string]any `json:"elasticsearch"`
+	Kafka         map[string]any `json:"kafka"`
+	MQTT          map[string]any `json:"mqtt"`
+	MySQL         map[string]any `json:"mysql"`
+	NATS          map[string]any `json:"nats"`
+	PostgreSQL    map[string]any `json:"postgresql"`
+	Redis         map[string]any `json:"redis"`
+	Webhook       map[string]any `json:"webhook"`
 }
 
 // serverConfigV13 server configuration version '13' which is like
@@ -873,5 +871,5 @@ type serverConfigV33 struct {
 		// Add new external policy enforcements here.
 	} `json:"policy"`
 
-	LDAPServerConfig xldap.Config `json:"ldapserverconfig"`
+	LDAPServerConfig interface{} `json:"ldapserverconfig"`
 }

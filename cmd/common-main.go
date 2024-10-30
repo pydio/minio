@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,10 +31,12 @@ import (
 	"time"
 
 	"github.com/fatih/color"
+	"github.com/gorilla/mux"
 	dns2 "github.com/miekg/dns"
 	"github.com/minio/cli"
 
 	"github.com/minio/minio/cmd/config"
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/certs"
@@ -111,9 +114,9 @@ func newConfigDirFromCtx(ctx *cli.Context, option string, getDefaultDir func() s
 	return &ConfigDir{path: dirAbs}, dirSet
 }
 
-func handleCommonCmdArgs(ctx *cli.Context) CliContext {
+func handleCommonCmdArgs(ctx *cli.Context, globals *Globals) {
 
-	cliCtx := CliContext{}
+	cliCtx := &CliContext{}
 	// Get "json" flag from command line argument and
 	// enable json and quite modes if json flag is turned on.
 	cliCtx.JSON = ctx.IsSet("json") || ctx.GlobalIsSet("json")
@@ -138,6 +141,14 @@ func handleCommonCmdArgs(ctx *cli.Context) CliContext {
 	if cliCtx.Addr == "" || cliCtx.Addr == ":"+GlobalMinioDefaultPort {
 		cliCtx.Addr = ctx.String("address")
 	}
+	logger.FatalIf(CheckLocalServerAddr(cliCtx.Addr), "Unable to validate passed arguments")
+
+	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
+	// to IPv6 address ie minio will start listening on IPv6 address whereas another
+	// (non-)minio process is listening on IPv4 of given port.
+	// To avoid this error situation we check for port availability.
+	globals.MinioHost, globals.MinioPort = mustSplitHostPort(cliCtx.Addr)
+	logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the gateway")
 
 	// Check "no-compat" flag from command line argument.
 	cliCtx.StrictS3Compat = true
@@ -160,7 +171,59 @@ func handleCommonCmdArgs(ctx *cli.Context) CliContext {
 	cliCtx.CertsCADir = &ConfigDir{path: filepath.Join(cliCtx.CertsDir.Get(), certsCADir)}
 
 	logger.FatalIf(mkdirAllIgnorePerm(cliCtx.CertsCADir.Get()), "Unable to create certs CA directory at %s", cliCtx.CertsCADir.Get())
-	return cliCtx
+
+	globals.CliContext = cliCtx
+
+}
+
+func initRouter(g *Globals) *mux.Router {
+	// Initialize router. `SkipClean(true)` stops gorilla/mux from
+	// normalizing URL path minio/minio#3256
+	router := mux.NewRouter().SkipClean(true).UseEncodedPath()
+	registerAPIRouter(g, router)
+
+	//hh := append(globalHandlers, injectGlobalsHandler(globals))
+	hh := append([]mux.MiddlewareFunc{injectGlobalsHandler(g)}, globalHandlers...)
+	router.Use(hh...)
+	return router
+}
+
+func initHttpServer(g *Globals, router *mux.Router) {
+	var getCert certs.GetCertificateFunc
+	if g.TLSCerts != nil {
+		getCert = g.TLSCerts.GetCertificate
+	}
+
+	httpServer := xhttp.NewServer([]string{g.CliContext.Addr}, criticalErrorHandler{g.corsHandler(router)}, getCert)
+	httpServer.BaseContext = func(listener net.Listener) context.Context {
+		return GlobalContext
+	}
+	go func() {
+		g.HTTPServerErrorCh <- httpServer.Start()
+	}()
+
+	g.setHTTPServer(httpServer)
+
+}
+
+func initTlsVars(g *Globals) {
+	var err error
+
+	// Check and load TLS certificates.
+	g.PublicCerts, g.TLSCerts, g.IsTLS, err = g.getTLSConfig()
+	logger.FatalIf(err, "Unable to load the TLS configuration")
+
+	// Check and load Root CAs.
+	g.RootCAs, err = certs.GetRootCAs(g.CliContext.CertsCADir.Get())
+	logger.FatalIf(err, "Failed to read root CAs (%v)", err)
+
+	// Add the global public crts as part of global root CAs
+	for _, publicCrt := range g.PublicCerts {
+		g.RootCAs.AddCert(publicCrt)
+	}
+
+	// Register root CAs for remote ENVs
+	env.RegisterGlobalCAs(g.RootCAs)
 
 }
 

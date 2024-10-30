@@ -21,24 +21,18 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/minio/cli"
 
 	"github.com/minio/minio/cmd/config"
-	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/cmd/logger"
 	"github.com/minio/minio/pkg/auth"
 	"github.com/minio/minio/pkg/bucket/bandwidth"
-	"github.com/minio/minio/pkg/certs"
 	"github.com/minio/minio/pkg/color"
-	"github.com/minio/minio/pkg/env"
 )
 
 // ServerFlags - server command specific flags
@@ -91,62 +85,6 @@ EXAMPLES:
      {{.Prompt}} {{.HelpName}} http://node{1...16}.example.com/mnt/export{1...32} \
             http://node{17...64}.example.com/mnt/export{1...64}
 `,
-}
-
-func serverCmdArgs(ctx *cli.Context) []string {
-	v := env.Get(config.EnvArgs, "")
-	if v == "" {
-		// Fall back to older ENV MINIO_ENDPOINTS
-		v = env.Get(config.EnvEndpoints, "")
-	}
-	if v == "" {
-		if !ctx.Args().Present() || ctx.Args().First() == "help" {
-			cli.ShowCommandHelpAndExit(ctx, ctx.Command.Name, 1)
-		}
-		return ctx.Args()
-	}
-	return strings.Fields(v)
-}
-
-func serverHandleCmdArgs(ctx *cli.Context, globals *Globals) {
-	// Handle common command args.
-	cliCtx := handleCommonCmdArgs(ctx)
-	globals.CliContext = cliCtx
-
-	logger.FatalIf(CheckLocalServerAddr(cliCtx.Addr), "Unable to validate passed arguments")
-
-	var err error
-
-	// Check and load TLS certificates.
-	globals.PublicCerts, globals.TLSCerts, globals.IsTLS, err = globals.getTLSConfig()
-	logger.FatalIf(err, "Unable to load the TLS configuration")
-
-	// Check and load Root CAs.
-	globals.RootCAs, err = certs.GetRootCAs(cliCtx.CertsCADir.Get())
-	logger.FatalIf(err, "Failed to read root CAs (%v)", err)
-
-	// Add the global public crts as part of global root CAs
-	for _, publicCrt := range globals.PublicCerts {
-		globals.RootCAs.AddCert(publicCrt)
-	}
-
-	// Register root CAs for remote ENVs
-	env.RegisterGlobalCAs(globals.RootCAs)
-
-	globals.MinioAddr = cliCtx.Addr
-
-	globals.MinioHost, globals.MinioPort = mustSplitHostPort(globals.MinioAddr)
-	globals.Endpoints, _, err = createServerEndpoints(cliCtx.Addr, globals.MinioPort, serverCmdArgs(ctx)...)
-	logger.FatalIf(err, "Invalid command line arguments")
-
-	globals.LocalNodeName = GetLocalPeer(globals.Endpoints, globals.MinioHost, globals.MinioPort)
-
-	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
-	// to IPv6 address ie minio will start listening on IPv6 address whereas another
-	// (non-)minio process is listening on IPv4 of given port.
-	// To avoid this error situation we check for port availability.
-	logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the server")
-
 }
 
 func newAllSubsystems(globals *Globals) {
@@ -202,9 +140,7 @@ func configRetriableErrors(err error) bool {
 		errors.Is(err, os.ErrDeadlineExceeded)
 }
 
-func initServer(ctx context.Context, globals *Globals, newObject ObjectLayer) error {
-	// Once the config is fully loaded, initialize the new object layer.
-	globals.setObjectLayer(newObject)
+func initServerAndConfig(ctx context.Context, globals *Globals, newObject ObjectLayer) error {
 
 	// Make sure to hold lock for entire migration to avoid
 	// such that only one server should migrate the entire config
@@ -311,8 +247,6 @@ func serverMain(ctx *cli.Context) {
 
 	signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
-	go handleSignals(globals)
-
 	setDefaultProfilerRates()
 
 	// Perform any self-tests
@@ -320,57 +254,28 @@ func serverMain(ctx *cli.Context) {
 
 	compressSelfTest()
 
-	// Handle all server command args.
-	serverHandleCmdArgs(ctx, globals)
+	// Handle common command args.
+	handleCommonCmdArgs(ctx, globals)
 
-	// Handle common environment variables.
+	// Handle common env vars.
 	handleCommonEnvVars(globals)
 
-	// Set node name, only set for distributed setup.
-	//globalConsoleSys.SetNodeName(globals.LocalNodeName)
+	initTlsVars(globals)
 
-	// Initialize all help
-	initHelp()
+	var err error
+	globals.Endpoints, _, err = createServerEndpoints(globals.CliContext.Addr, globals.MinioPort, ctx.Args()...)
+	logger.FatalIf(err, "Invalid command line arguments")
+	globals.LocalNodeName = GetLocalPeer(globals.Endpoints, globals.MinioHost, globals.MinioPort)
 
 	// Initialize all sub-systems
 	newAllSubsystems(globals)
 
-	globals.MinioEndpoint = func() string {
-		host := globals.MinioHost
-		if host == "" {
-			host = sortIPs(localIP4.ToSlice())[0]
-		}
-		return fmt.Sprintf("%s://%s", getURLScheme(globals.IsTLS), net.JoinHostPort(host, globals.MinioPort))
-	}()
-
 	// Set system resources to maximum.
-	setMaxResources()
+	_ = setMaxResources()
 
-	// Configure server.
-	// Initialize router. `SkipClean(true)` stops gorilla/mux from
-	// normalizing URL path minio/minio#3256
-	router := mux.NewRouter().SkipClean(true).UseEncodedPath()
-	registerAPIRouter(globals, router)
-
-	//hh := append(globalHandlers, injectGlobalsHandler(globals))
-	hh := append([]mux.MiddlewareFunc{injectGlobalsHandler(globals)}, globalHandlers...)
-	router.Use(hh...)
-
-	var getCert certs.GetCertificateFunc
-	if globals.TLSCerts != nil {
-		getCert = globals.TLSCerts.GetCertificate
-	}
-
-	httpServer := xhttp.NewServer([]string{globals.MinioAddr}, criticalErrorHandler{globals.corsHandler(router)}, getCert)
-	httpServer.BaseContext = func(listener net.Listener) context.Context {
-		return GlobalContext
-	}
-	go func() {
-		globals.HTTPServerErrorCh <- httpServer.Start()
-	}()
-
-	globals.setHTTPServer(httpServer)
-	//setHTTPServer(httpServer)
+	// Router & HTTP
+	router := initRouter(globals)
+	initHttpServer(globals, router)
 
 	newObject, err := NewFSObjectLayer(globals, globals.Endpoints[0].Endpoints[0].Path)
 	if err != nil {
@@ -381,7 +286,10 @@ func serverMain(ctx *cli.Context) {
 
 	initDataScanner(GlobalContext, globals, newObject)
 
-	if err = initServer(GlobalContext, globals, newObject); err != nil {
+	// Once the config is fully loaded, initialize the new object layer.
+	globals.setObjectLayer(newObject)
+
+	if err = initServerAndConfig(GlobalContext, globals, newObject); err != nil {
 		var cerr config.Err
 		// For any config error, we don't need to drop into safe-mode
 		// instead its a user error and should be fixed by user.
@@ -406,5 +314,5 @@ func serverMain(ctx *cli.Context) {
 		logger.StartupMessage(color.RedBold(msg))
 	}
 
-	<-globals.OSSignalCh
+	handleSignals(globals)
 }

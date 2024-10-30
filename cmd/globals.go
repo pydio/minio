@@ -103,7 +103,7 @@ type CliContext struct {
 }
 
 type Globals struct {
-	CliContext CliContext
+	CliContext *CliContext
 
 	// Indicates if the running minio is in gateway mode.
 	IsGateway bool
@@ -117,8 +117,6 @@ type Globals struct {
 	// This flag is set to 'us-east-1' by default
 	ServerRegion string
 
-	// MinIO local server address (in `host:port` format)
-	MinioAddr string
 	// MinIO default port, can be changed through command line.
 	MinioPort string
 	// Holds the host that was passed using --address

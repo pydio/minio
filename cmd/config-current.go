@@ -24,9 +24,7 @@ import (
 	"github.com/minio/minio/cmd/config/api"
 	"github.com/minio/minio/cmd/config/cache"
 	"github.com/minio/minio/cmd/config/compress"
-	"github.com/minio/minio/cmd/config/etcd"
 	"github.com/minio/minio/cmd/config/heal"
-	xldap "github.com/minio/minio/cmd/config/identity/ldap"
 	"github.com/minio/minio/cmd/config/identity/openid"
 	"github.com/minio/minio/cmd/config/notify"
 	"github.com/minio/minio/cmd/config/policy/opa"
@@ -38,10 +36,8 @@ import (
 
 func initHelp() {
 	var kvs = map[string]config.KVS{
-		config.EtcdSubSys:           etcd.DefaultKVS,
 		config.CacheSubSys:          cache.DefaultKVS,
 		config.CompressionSubSys:    compress.DefaultKVS,
-		config.IdentityLDAPSubSys:   xldap.DefaultKVS,
 		config.IdentityOpenIDSubSys: openid.DefaultKVS,
 		config.PolicyOPASubSys:      opa.DefaultKVS,
 		config.RegionSubSys:         config.DefaultRegionKVS,
@@ -176,28 +172,12 @@ func initHelp() {
 		config.RegionSubSys:         config.RegionHelp,
 		config.APISubSys:            api.Help,
 		config.StorageClassSubSys:   storageclass.Help,
-		config.EtcdSubSys:           etcd.Help,
 		config.CacheSubSys:          cache.Help,
 		config.CompressionSubSys:    compress.Help,
 		config.HealSubSys:           heal.Help,
 		config.ScannerSubSys:        scanner.Help,
 		config.IdentityOpenIDSubSys: openid.Help,
-		config.IdentityLDAPSubSys:   xldap.Help,
 		config.PolicyOPASubSys:      opa.Help,
-		config.KmsVaultSubSys:       crypto.HelpVault,
-		config.KmsKesSubSys:         crypto.HelpKes,
-		config.LoggerWebhookSubSys:  logger.Help,
-		config.AuditWebhookSubSys:   logger.HelpAudit,
-		config.NotifyAMQPSubSys:     notify.HelpAMQP,
-		config.NotifyKafkaSubSys:    notify.HelpKafka,
-		config.NotifyMQTTSubSys:     notify.HelpMQTT,
-		config.NotifyNATSSubSys:     notify.HelpNATS,
-		config.NotifyNSQSubSys:      notify.HelpNSQ,
-		config.NotifyMySQLSubSys:    notify.HelpMySQL,
-		config.NotifyPostgresSubSys: notify.HelpPostgres,
-		config.NotifyRedisSubSys:    notify.HelpRedis,
-		config.NotifyWebhookSubSys:  notify.HelpWebhook,
-		config.NotifyESSubSys:       notify.HelpES,
 	}
 
 	config.RegisterHelpSubSys(helpMap)

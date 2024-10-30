@@ -319,8 +319,7 @@ func (args eventArgs) ToEvent(escape bool, globals *Globals) event.Event {
 	uniqueID := fmt.Sprintf("%X", eventTime.UnixNano())
 
 	respElements := map[string]string{
-		"x-amz-request-id":        args.RespElements["requestId"],
-		"x-minio-origin-endpoint": globals.MinioEndpoint, // MinIO specific custom elements.
+		"x-amz-request-id": args.RespElements["requestId"],
 	}
 	// Add deployment as part of
 	if globals.DeploymentID != "" {
