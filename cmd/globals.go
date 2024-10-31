@@ -17,6 +17,7 @@
 package cmd
 
 import (
+	"context"
 	"crypto/x509"
 	"errors"
 	"fmt"
@@ -104,6 +105,10 @@ type CliContext struct {
 }
 
 type Globals struct {
+	// Inject a context to interrupt service
+	Context context.Context
+
+	// CliContext parses command line arguments
 	CliContext *CliContext
 
 	// Indicates if the running minio is in gateway mode.
@@ -152,9 +157,10 @@ type Globals struct {
 
 	TLSCerts *certs.Manager
 
-	HTTPServer        *xhttp.Server
-	HTTPServerErrorCh chan error
-	OSSignalCh        chan os.Signal
+	HTTPServerExternal bool
+	HTTPServer         *xhttp.Server
+	HTTPServerErrorCh  chan error
+	OSSignalCh         chan os.Signal
 
 	//  Trace system to send HTTP request/response
 	// and Storage/OS calls info to registered listeners.

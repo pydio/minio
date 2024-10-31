@@ -25,6 +25,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gorilla/mux"
 	"github.com/minio/cli"
 
 	"github.com/minio/minio/cmd/config"
@@ -181,9 +182,14 @@ func StartGateway(ctx *cli.Context, gw Gateway) {
 	StartGatewayWithGlobals(globals, gw)
 }
 
+func CreateGatewayRouter(globals *Globals) *mux.Router {
+	return initRouter(globals)
+}
+
 // StartGatewayWithGlobals -  can be used to inject start parameter from outside
 // It will no check for ENV arguments and command line arguments
 func StartGatewayWithGlobals(globals *Globals, gw Gateway) {
+
 	defer globals.DNSCache.Stop()
 
 	if globals.CliContext.Quiet {
@@ -193,21 +199,14 @@ func StartGatewayWithGlobals(globals *Globals, gw Gateway) {
 		logger.EnableJSON()
 	}
 
-	initHelp() // this initialize some configuration defaults values
-
-	// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
-	// to IPv6 address ie minio will start listening on IPv6 address whereas another
-	// (non-)minio process is listening on IPv4 of given port.
-	// To avoid this error situation we check for port availability.
-	globals.MinioHost, globals.MinioPort = mustSplitHostPort(globals.CliContext.Addr)
-	logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the gateway")
+	// do not remove - this initializes some configuration defaults values
+	initHelp()
 
 	if gw == nil {
 		logger.FatalIf(errUnexpected, "Gateway implementation not initialized")
 	}
 
 	initTlsVars(globals)
-	signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
 
 	// This is only to uniquely identify each gateway deployments.
 	globals.DeploymentID = env.Get("MINIO_GATEWAY_DEPLOYMENT_ID", mustGetUUID())
@@ -227,10 +226,6 @@ func StartGatewayWithGlobals(globals *Globals, gw Gateway) {
 	_ = setMaxResources()
 
 	initGatewayConfig(globals)
-
-	// Router & HTTP
-	router := initRouter(globals)
-	initHttpServer(globals, router)
 
 	newObject, err := gw.NewGatewayLayer(globals, globals.ActiveCred)
 	if err != nil {
@@ -253,6 +248,26 @@ func StartGatewayWithGlobals(globals *Globals, gw Gateway) {
 		globals.printGatewayStartupMessage(globals.GatewayName)
 	}
 
-	// BLOCKING CALL
-	handleSignals(globals)
+	// Router & HTTP
+	if !globals.HTTPServerExternal {
+		router := CreateGatewayRouter(globals)
+		// On macOS, if a process already listens on LOCALIPADDR:PORT, net.Listen() falls back
+		// to IPv6 address ie minio will start listening on IPv6 address whereas another
+		// (non-)minio process is listening on IPv4 of given port.
+		// To avoid this error situation we check for port availability.
+		globals.MinioHost, globals.MinioPort = mustSplitHostPort(globals.CliContext.Addr)
+		logger.FatalIf(checkPortAvailability(globals.MinioHost, globals.MinioPort), "Unable to start the gateway")
+		logger.Info("Starting HTTPServer for gateway " + globals.GatewayName)
+		initHttpServer(globals, router)
+	} else {
+		logger.Info("Running gateway " + globals.GatewayName)
+	}
+
+	if globals.Context != nil {
+		<-globals.Context.Done()
+	} else {
+		// watch OS signals
+		signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
+		handleSignals(globals)
+	}
 }

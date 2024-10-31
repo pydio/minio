@@ -189,8 +189,13 @@ func initHttpServer(g *Globals, router *mux.Router) {
 	}
 
 	httpServer := xhttp.NewServer([]string{g.CliContext.Addr}, criticalErrorHandler{g.corsHandler(router)}, getCert)
+
+	ctx := GlobalContext
+	if g.Context != nil {
+		ctx = g.Context
+	}
 	httpServer.BaseContext = func(listener net.Listener) context.Context {
-		return GlobalContext
+		return ctx
 	}
 	go func() {
 		g.HTTPServerErrorCh <- httpServer.Start()
