@@ -336,5 +336,11 @@ func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 		logger.StartupMessage(color.RedBold(msg))
 	}
 
-	handleSignals(globals)
+	if globals.Context != nil {
+		<-globals.Context.Done()
+	} else {
+		// watch OS signals
+		signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
+		handleSignals(globals)
+	}
 }
