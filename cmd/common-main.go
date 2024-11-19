@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fatih/color"
@@ -45,7 +46,10 @@ import (
 )
 
 // serverDebugLog will enable debug printing
-var serverDebugLog = env.Get("_MINIO_SERVER_DEBUG", config.EnableOff) == config.EnableOn
+var (
+	serverDebugLog = env.Get("_MINIO_SERVER_DEBUG", config.EnableOff) == config.EnableOn
+	ihOnce         = sync.Once{}
+)
 
 func init() {
 	rand.Seed(time.Now().UTC().UnixNano())
@@ -62,6 +66,7 @@ func init() {
 	console.SetColor("Debug", color.New())
 
 	gob.Register(StorageErr(""))
+
 }
 
 func (g *Globals) verifyObjectLayerFeatures(name string, objAPI ObjectLayer) {
@@ -167,6 +172,12 @@ func handleCommonCmdArgs(ctx *cli.Context, globals *Globals) {
 
 	globals.CliContext = cliCtx
 
+}
+
+func initHelpOnce() {
+	ihOnce.Do(func() {
+		initHelp()
+	})
 }
 
 func initRouter(g *Globals) *mux.Router {

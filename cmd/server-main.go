@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -271,8 +272,6 @@ func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 		logger.EnableJSON()
 	}
 
-	signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)
-
 	setDefaultProfilerRates()
 
 	// Perform any self-tests
@@ -280,7 +279,7 @@ func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 
 	compressSelfTest()
 
-	initHelp() // this initialize some configuration defaults values
+	initHelpOnce() // this initialize some configuration defaults values
 
 	initTlsVars(globals)
 
@@ -306,12 +305,12 @@ func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 
 	logger.SetDeploymentID(globals.DeploymentID)
 
-	initDataScanner(GlobalContext, globals, newObject)
+	initDataScanner(globals.Context, globals, newObject)
 
 	// Once the config is fully loaded, initialize the new object layer.
 	globals.setObjectLayer(newObject)
 
-	if err = initServerAndConfig(GlobalContext, globals, newObject); err != nil {
+	if err = initServerAndConfig(globals.Context, globals, newObject); err != nil {
 		var cerr config.Err
 		// For any config error, we don't need to drop into safe-mode
 		// instead its a user error and should be fixed by user.
@@ -326,7 +325,7 @@ func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 	}
 
 	// Initialize users credentials and policies in background right after config has initialized.
-	go globals.IAMSys.Init(GlobalContext, newObject)
+	go globals.IAMSys.Init(globals.Context, newObject)
 
 	// Prints the formatted startup message, if err is not nil then it prints additional information as well.
 	globals.printStartupMessage(err)
@@ -338,6 +337,22 @@ func StartServerWithGlobals(globals *Globals, folderNames ...string) {
 
 	if globals.Context != nil {
 		<-globals.Context.Done()
+		if globals.NotificationSys != nil {
+			globals.NotificationSys.RemoveAllRemoteTargets()
+		}
+
+		if httpServer := globals.getHTTPServer(); httpServer != nil {
+			err = httpServer.Shutdown()
+			if !errors.Is(err, http.ErrServerClosed) {
+				logger.LogIf(context.Background(), err)
+			}
+			logger.Info("Stopped Minio service on " + globals.MinioPort)
+		}
+
+		if objAPI := globals.newObjectLayerFn(); objAPI != nil {
+			oerr := objAPI.Shutdown(context.Background())
+			logger.LogIf(context.Background(), oerr)
+		}
 	} else {
 		// watch OS signals
 		signal.Notify(globals.OSSignalCh, os.Interrupt, syscall.SIGTERM, syscall.SIGQUIT)

@@ -200,7 +200,7 @@ func StartGatewayWithGlobals(globals *Globals, gw Gateway) {
 	}
 
 	// do not remove - this initializes some configuration defaults values
-	initHelp()
+	initHelpOnce()
 
 	if gw == nil {
 		logger.FatalIf(errUnexpected, "Gateway implementation not initialized")
