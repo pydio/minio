@@ -14,9 +14,9 @@ require (
 	github.com/djherbis/atime v1.0.0
 	github.com/dswarbrick/smart v0.0.0-20190505152634-909a45200d6d
 	github.com/dustin/go-humanize v1.0.1
-	github.com/fatih/color v1.10.0
+	github.com/fatih/color v1.16.0
 	github.com/fatih/structs v1.1.0
-	github.com/golang-jwt/jwt/v4 v4.4.2
+	github.com/golang-jwt/jwt/v4 v4.5.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/mux v1.8.1
 	github.com/hashicorp/vault/api v1.0.4
@@ -26,8 +26,8 @@ require (
 	github.com/klauspost/cpuid/v2 v2.2.6
 	github.com/klauspost/pgzip v1.2.5
 	github.com/klauspost/readahead v1.3.1
-	github.com/mattn/go-colorable v0.1.8
-	github.com/mattn/go-isatty v0.0.12
+	github.com/mattn/go-colorable v0.1.13
+	github.com/mattn/go-isatty v0.0.20
 	github.com/miekg/dns v1.1.35
 	github.com/minio/cli v1.22.0
 	github.com/minio/highwayhash v1.0.2
@@ -48,9 +48,9 @@ require (
 	github.com/tinylib/msgp v1.1.3
 	github.com/valyala/tcplisten v0.0.0-20161114210144-ceec8f93295a
 	github.com/willf/bloom v2.0.3+incompatible
-	golang.org/x/crypto v0.28.0
-	golang.org/x/net v0.30.0
-	golang.org/x/sys v0.26.0
+	golang.org/x/crypto v0.31.0
+	golang.org/x/net v0.33.0
+	golang.org/x/sys v0.28.0
 	google.golang.org/api v0.88.0
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -70,9 +70,9 @@ require (
 	github.com/googleapis/gax-go/v2 v2.4.0 // indirect
 	github.com/googleapis/go-type-adapters v1.0.0 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
-	github.com/hashicorp/go-cleanhttp v0.5.1 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.0.0 // indirect
-	github.com/hashicorp/go-retryablehttp v0.5.4 // indirect
+	github.com/hashicorp/go-retryablehttp v0.7.7 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.1 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.2 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
@@ -100,13 +100,13 @@ require (
 	github.com/willf/bitset v1.1.11 // indirect
 	go.opencensus.io v0.23.0 // indirect
 	golang.org/x/oauth2 v0.0.0-20220622183110-fd043fe589d2 // indirect
-	golang.org/x/text v0.19.0 // indirect
+	golang.org/x/text v0.21.0 // indirect
 	golang.org/x/time v0.0.0-20191024005414-555d28b269f0 // indirect
 	golang.org/x/xerrors v0.0.0-20220609144429-65e65417b02f // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20220624142145-8cd45d7dbd1f // indirect
 	google.golang.org/grpc v1.47.0 // indirect
-	google.golang.org/protobuf v1.28.1 // indirect
+	google.golang.org/protobuf v1.36.1 // indirect
 	gopkg.in/check.v1 v1.0.0-20200902074654-038fdea0a05b // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/square/go-jose.v2 v2.3.1 // indirect

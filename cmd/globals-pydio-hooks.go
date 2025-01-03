@@ -33,6 +33,7 @@ import (
 
 const (
 	ErrPydioQuotaExceeded = APIErrorCode(1422)
+	ErrTokenTimeMismatch  = APIErrorCode(1423)
 )
 
 type PydioQuotaExceeded GenericError
@@ -42,7 +43,8 @@ func (e PydioQuotaExceeded) Error() string {
 }
 
 func init() {
-	errorCodes[ErrPydioQuotaExceeded] = APIError{Code: "QuotaExceeded", Description: "You have reached your authorized quota", HTTPStatusCode: 422}
+	errorCodes[ErrPydioQuotaExceeded] = APIError{Code: "QuotaExceeded", Description: "You have reached your authorized quota", HTTPStatusCode: http.StatusUnprocessableEntity}
+	errorCodes[ErrTokenTimeMismatch] = APIError{Code: "TokenTimeMismatch", Description: "Token is invalid, the signature time seems to be mismatching. Check your proxy for reducing request buffering.", HTTPStatusCode: http.StatusGatewayTimeout}
 }
 
 type ReqParamExtractor func(req *http.Request, m map[string]string)
