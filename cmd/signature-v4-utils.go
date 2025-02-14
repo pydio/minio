@@ -51,7 +51,7 @@ func skipContentSha256Cksum(r *http.Request) bool {
 
 	// If x-amz-content-sha256 is set and the value is not
 	// 'UNSIGNED-PAYLOAD' we should validate the content sha256.
-	return !(ok && v[0] != unsignedPayload)
+	return !(ok && v[0] != unsignedPayload && v[0] != streamingContentSHA256Unsigned)
 }
 
 // Returns SHA256 for calculating canonical-request.

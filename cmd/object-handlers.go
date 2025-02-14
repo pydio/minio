@@ -1383,30 +1383,9 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
 		return
 	}
-
-	switch rAuthType {
-	case authTypeStreamingSigned:
-		// Initialize stream signature verifier.
-		reader, s3Err = newSignV4ChunkedReader(r)
-		if s3Err != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
-			return
-		}
-	case authTypeSignedV2, authTypePresignedV2:
-		s3Err = isReqAuthenticatedV2(r)
-		if s3Err != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
-			return
-		}
-
-	case authTypePresigned, authTypeSigned:
-		if s3Err = reqSignatureV4Verify(r, api.ServerRegion, serviceS3); s3Err != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
-			return
-		}
-		if !skipContentSha256Cksum(r) {
-			sha256hex = getContentSha256Cksum(r, serviceS3)
-		}
+	if reader, sha256hex, s3Err = api.verifySignatureAndExtractSHA256(r, rAuthType); s3Err != ErrNone {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
+		return
 	}
 
 	if err := enforceBucketQuota(ctx, bucket, size); err != nil {
@@ -1522,7 +1501,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	// Ensure that metadata does not contain sensitive information
 	crypto.RemoveSensitiveEntries(metadata)
 
-	// Create the object..
+	// Create the object.
 	objInfo, err := putObject(ctx, bucket, object, pReader, opts)
 	if err != nil {
 		writeErrorResponse(ctx, w, toAPIError(ctx, err), r.URL, guessIsBrowserReq(r))
@@ -1667,30 +1646,9 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
 		return
 	}
-
-	switch rAuthType {
-	case authTypeStreamingSigned:
-		// Initialize stream signature verifier.
-		reader, s3Err = newSignV4ChunkedReader(r)
-		if s3Err != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
-			return
-		}
-	case authTypeSignedV2, authTypePresignedV2:
-		s3Err = isReqAuthenticatedV2(r)
-		if s3Err != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
-			return
-		}
-
-	case authTypePresigned, authTypeSigned:
-		if s3Err = reqSignatureV4Verify(r, api.ServerRegion, serviceS3); s3Err != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
-			return
-		}
-		if !skipContentSha256Cksum(r) {
-			sha256hex = getContentSha256Cksum(r, serviceS3)
-		}
+	if reader, sha256hex, s3Err = api.verifySignatureAndExtractSHA256(r, rAuthType); s3Err != ErrNone {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Err), r.URL, guessIsBrowserReq(r))
+		return
 	}
 
 	hreader, err := hash.NewReader(reader, size, md5hex, sha256hex, size)
@@ -2375,28 +2333,9 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 		return
 	}
 
-	switch rAuthType {
-	case authTypeStreamingSigned:
-		// Initialize stream signature verifier.
-		reader, s3Error = newSignV4ChunkedReader(r)
-		if s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
-			return
-		}
-	case authTypeSignedV2, authTypePresignedV2:
-		if s3Error = isReqAuthenticatedV2(r); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
-			return
-		}
-	case authTypePresigned, authTypeSigned:
-		if s3Error = reqSignatureV4Verify(r, api.ServerRegion, serviceS3); s3Error != ErrNone {
-			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
-			return
-		}
-
-		if !skipContentSha256Cksum(r) {
-			sha256hex = getContentSha256Cksum(r, serviceS3)
-		}
+	if reader, sha256hex, s3Error = api.verifySignatureAndExtractSHA256(r, rAuthType); s3Error != ErrNone {
+		writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, s3Error), r.URL, guessIsBrowserReq(r))
+		return
 	}
 
 	if err := enforceBucketQuota(ctx, bucket, size); err != nil {
@@ -3542,4 +3481,38 @@ func (api objectAPIHandlers) PostRestoreObjectHandler(w http.ResponseWriter, r *
 	ctx := newContext(r, w, "PostRestoreObject")
 	defer logger.AuditLog(ctx, w, r, mustGetClaimsFromToken(r))
 	writeErrorResponse(ctx, w, toAPIError(ctx, &NotImplemented{}), r.URL, guessIsBrowserReq(r))
+}
+
+func (api objectAPIHandlers) verifySignatureAndExtractSHA256(r *http.Request, rAuthType authType) (reader io.ReadCloser, sha256hex string, s3Error APIErrorCode) {
+	ignoreVerify := mustGlobalsFromContext(r.Context()).IsGateway
+	reader = r.Body
+
+	switch rAuthType {
+	case authTypeStreamingSigned:
+		if ignoreVerify {
+			fmt.Println("Gateway received a StreamingSignature")
+		}
+		// Initialize stream signature verifier.
+		reader, s3Error = newSignV4ChunkedReader(r)
+		if s3Error != ErrNone {
+			return
+		}
+	case authTypeSignedV2, authTypePresignedV2:
+		if ignoreVerify {
+			return
+		}
+		if s3Error = isReqAuthenticatedV2(r); s3Error != ErrNone {
+			return
+		}
+	case authTypePresigned, authTypeSigned:
+		if !ignoreVerify {
+			if s3Error = reqSignatureV4Verify(r, api.ServerRegion, serviceS3); s3Error != ErrNone {
+				return
+			}
+		}
+		if !skipContentSha256Cksum(r) {
+			sha256hex = getContentSha256Cksum(r, serviceS3)
+		}
+	}
+	return
 }

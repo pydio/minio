@@ -37,10 +37,11 @@ import (
 
 // Streaming AWS Signature Version '4' constants.
 const (
-	emptySHA256              = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	streamingContentSHA256   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-	signV4ChunkedAlgorithm   = "AWS4-HMAC-SHA256-PAYLOAD"
-	streamingContentEncoding = "aws-chunked"
+	emptySHA256                    = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	streamingContentSHA256         = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentSHA256Unsigned = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+	signV4ChunkedAlgorithm         = "AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentEncoding       = "aws-chunked"
 )
 
 // getChunkSignature - get chunk signature.
@@ -83,10 +84,10 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	}
 
 	// Payload streaming.
-	payload := streamingContentSHA256
+	payload := req.Header.Get(xhttp.AmzContentSha256) // streamingContentSHA256
 
-	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
-	if payload != req.Header.Get(xhttp.AmzContentSha256) {
+	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD' or UNSIGNED
+	if payload != streamingContentSHA256 && payload != streamingContentSHA256Unsigned {
 		return cred, "", "", time.Time{}, ErrContentSHA256Mismatch
 	}
 
@@ -213,8 +214,8 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 	//   <chunk-size-as-hex> + ";chunk-signature=" + <signature-as-hex> + "\r\n" + <payload> + "\r\n"
 	//
 	// Frist, we read the chunk size but fail if it is larger
-	// than 1 MB. We must not accept arbitrary large chunks.
-	// One 1 MB is a reasonable max limit.
+	// than 16 MB. We must not accept arbitrary large chunks.
+	// One 16 MB is a reasonable max limit.
 	//
 	// Then we read the signature and payload data. We compute the SHA256 checksum
 	// of the payload and verify that it matches the expected signature value.
@@ -222,7 +223,7 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 	// The last chunk is *always* 0-sized. So, we must only return io.EOF if we have encountered
 	// a chunk with a chunk size = 0. However, this chunk still has a signature and we must
 	// verify it.
-	const MaxSize = 1 << 20 // 1 MB
+	const MaxSize = 16 << 20 // 1 MB
 	var size int
 	for {
 		b, err := cr.reader.ReadByte()

@@ -77,7 +77,8 @@ func isRequestPostPolicySignatureV4(r *http.Request) bool {
 
 // Verify if the request has AWS Streaming Signature Version '4'. This is only valid for 'PUT' operation.
 func isRequestSignStreamingV4(r *http.Request) bool {
-	return r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 &&
+	return (r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 ||
+		r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256Unsigned) &&
 		r.Method == http.MethodPut
 }
 
@@ -212,6 +213,9 @@ func checkClaimsFromToken(r *http.Request, cred auth.Credentials) (map[string]in
 //
 // returns APIErrorCode if any to be replied to the client.
 func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (s3Err APIErrorCode) {
+	if mustGlobalsFromContext(ctx).IsGateway {
+		return ErrNone
+	}
 	_, _, s3Err = checkRequestAuthTypeCredential(ctx, r, action, bucketName, objectName)
 	return s3Err
 }
@@ -556,6 +560,9 @@ func isPutRetentionAllowed(ctx context.Context, bucketName, objectName string, r
 // checks etc.
 func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectName string, r *http.Request, action iampolicy.Action) (s3Err APIErrorCode) {
 	globals := mustGlobalsFromContext(ctx)
+	if globals.IsGateway {
+		return ErrNone
+	}
 	var cred auth.Credentials
 	var owner bool
 	switch atype {

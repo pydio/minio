@@ -22,12 +22,10 @@ package cmd
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/url"
 
-	"github.com/gorilla/mux"
-
+	xhttp "github.com/minio/minio/cmd/http"
 	"github.com/minio/minio/pkg/disk"
 )
 
@@ -53,16 +51,6 @@ var (
 	pydioReqParamHooks []ReqParamExtractor
 )
 
-// HookRegisterGlobalHandler provides an access point to enrich globalHandlers
-func HookRegisterGlobalHandler(handlerFunc mux.MiddlewareFunc) {
-	globalHandlers = append(globalHandlers, handlerFunc)
-}
-
-// HookExtractReqParams registers a request parameters extractor, used in the event system
-func HookExtractReqParams(extractor ReqParamExtractor) {
-	pydioReqParamHooks = append(pydioReqParamHooks, extractor)
-}
-
 func applyHooksExtractReqParams(req *http.Request, m map[string]string) {
 	g := mustGlobalsFromContext(req.Context())
 	for _, f := range g.ReqParamExtractors {
@@ -73,26 +61,69 @@ func applyHooksExtractReqParams(req *http.Request, m map[string]string) {
 	}
 }
 
-// ExposedParseSignV4 parses a v4 signature and return the signature accessKey if it's valid.
-func ExposedParseSignV4(ctx context.Context, v4auth string) (string, error) {
-	globals := mustGlobalsFromContext(ctx)
-	val, code := parseSignV4(v4auth, globals.ServerRegion, "s3")
-	if code != ErrNone {
-		return "", fmt.Errorf("cannot parse signature - code is %d", code)
-	} else {
-		return val.Credential.accessKey, nil
+// ExposedValidateRequestSignature validates request signature (v2, v4, signed or presigned) against passed globals (in context)
+func ExposedValidateRequestSignature(r *http.Request) APIErrorCode {
+	switch getRequestAuthType(r) {
+	case authTypeUnknown:
+		return ErrSignatureVersionNotSupported
+	case authTypePresignedV2, authTypeSignedV2:
+		return isReqAuthenticatedV2(r)
+	case authTypeSigned, authTypePresigned, authTypeStreamingSigned:
+		globals := mustGlobalsFromContext(r.Context())
+		region := globals.ServerRegion
+		return isReqAuthenticated(r.Context(), r, region, serviceS3)
+	default:
+		return ErrSignatureVersionNotSupported
 	}
 }
 
-// ExposedParsePresignV4 parses a presigned v4 signature and return the signature accessKey if it's valid.
-func ExposedParsePresignV4(ctx context.Context, query url.Values) (string, error) {
+// ExposedUpdateContextWithCredentials updates Globals.ActiveCred inside the context (by creating a copy)
+func ExposedUpdateContextWithCredentials(ctx context.Context, apiKey, apiSecret, region string) context.Context {
 	globals := mustGlobalsFromContext(ctx)
-	val, code := parsePreSignV4(query, globals.ServerRegion, "s3")
-	if code != ErrNone {
-		return "", fmt.Errorf("cannot parse signature - code is %d", code)
-	} else {
-		return val.Credential.accessKey, nil
+	gl := *globals
+	if apiKey != "" {
+		gl.ActiveCred.AccessKey = apiKey
 	}
+	if apiSecret != "" {
+		gl.ActiveCred.SecretKey = apiSecret
+	}
+	if region != "" {
+		gl.ServerRegion = region
+	}
+	return passGlobalsInContext(ctx, &gl)
+}
+
+// ExposedExtractKeyFromSignature finds signature type and extract the Api Key (without further validation)
+func ExposedExtractKeyFromSignature(r *http.Request) (string, APIErrorCode) {
+	globals := mustGlobalsFromContext(r.Context())
+	region := globals.ServerRegion
+
+	switch getRequestAuthType(r) {
+	case authTypeUnknown:
+		return "", ErrSignatureVersionNotSupported
+	case authTypePresignedV2, authTypeSignedV2:
+		if accessKey := r.URL.Query().Get(xhttp.AmzAccessKeyID); accessKey != "" {
+			return accessKey, ErrNone
+		} else {
+			return "", ErrSignatureDoesNotMatch
+		}
+	case authTypeSigned, authTypeStreamingSigned:
+		if sv, er := parseSignV4(r.Header.Get("Authorization"), region, serviceS3); er != ErrNone {
+			return "", er
+		} else {
+			return sv.Credential.accessKey, ErrNone
+		}
+	case authTypePresigned:
+		_ = r.ParseForm()
+		if sv, er := parsePreSignV4(r.Form, region, serviceS3); er != ErrNone {
+			return "", er
+		} else {
+			return sv.Credential.accessKey, ErrNone
+		}
+	default:
+		return "", ErrSignatureVersionNotSupported
+	}
+
 }
 
 // ExposedWriteErrorResponse writes an error code in proper XML foramt
