@@ -1326,7 +1326,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	/// if Content-Length is unknown/missing, deny the request
 	size := r.ContentLength
 	rAuthType := getRequestAuthType(r)
-	if rAuthType == authTypeStreamingSigned {
+	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 		if sizeStr, ok := r.Header[xhttp.AmzDecodedContentLength]; ok {
 			if sizeStr[0] == "" {
 				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
@@ -1608,7 +1608,7 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 	/// if Content-Length is unknown/missing, deny the request
 	size := r.ContentLength
 	rAuthType := getRequestAuthType(r)
-	if rAuthType == authTypeStreamingSigned {
+	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 		if sizeStr, ok := r.Header[xhttp.AmzDecodedContentLength]; ok {
 			if sizeStr[0] == "" {
 				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
@@ -2283,7 +2283,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	rAuthType := getRequestAuthType(r)
 	// For auth type streaming signature, we need to gather a different content length.
-	if rAuthType == authTypeStreamingSigned {
+	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 		if sizeStr, ok := r.Header[xhttp.AmzDecodedContentLength]; ok {
 			if sizeStr[0] == "" {
 				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ctx, ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
@@ -3490,10 +3490,19 @@ func (api objectAPIHandlers) verifySignatureAndExtractSHA256(r *http.Request, rA
 	switch rAuthType {
 	case authTypeStreamingSigned:
 		if ignoreVerify {
-			fmt.Println("Gateway received a StreamingSignature")
+			//fmt.Println("Gateway received a StreamingSignature signed")
 		}
 		// Initialize stream signature verifier.
 		reader, s3Error = newSignV4ChunkedReader(r)
+		if s3Error != ErrNone {
+			return
+		}
+	case authTypeStreamingUnsigned:
+		if ignoreVerify {
+			//fmt.Println("Gateway received a StreamingSignature Unsiged")
+		}
+		// Initialize stream signature verifier.
+		reader, s3Error = newUnsignedV4ChunkedReader(r)
 		if s3Error != ErrNone {
 			return
 		}

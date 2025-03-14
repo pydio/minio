@@ -76,10 +76,15 @@ func isRequestPostPolicySignatureV4(r *http.Request) bool {
 }
 
 // Verify if the request has AWS Streaming Signature Version '4'. This is only valid for 'PUT' operation.
-func isRequestSignStreamingV4(r *http.Request) bool {
-	return (r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 ||
-		r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256Unsigned) &&
-		r.Method == http.MethodPut
+func isRequestSignStreamingV4(r *http.Request) (ok, unsigned bool) {
+	if r.Method != http.MethodPut {
+		return false, false
+	} else if r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 {
+		return true, false
+	} else if r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256Unsigned {
+		return true, true
+	}
+	return false, false
 }
 
 // Authorization type.
@@ -93,6 +98,7 @@ const (
 	authTypePresignedV2
 	authTypePostPolicy
 	authTypeStreamingSigned
+	authTypeStreamingUnsigned
 	authTypeSigned
 	authTypeSignedV2
 	authTypeJWT
@@ -105,8 +111,12 @@ func getRequestAuthType(r *http.Request) authType {
 		return authTypeSignedV2
 	} else if isRequestPresignedSignatureV2(r) {
 		return authTypePresignedV2
-	} else if isRequestSignStreamingV4(r) {
-		return authTypeStreamingSigned
+	} else if s, unsigned := isRequestSignStreamingV4(r); s {
+		if unsigned {
+			return authTypeStreamingUnsigned
+		} else {
+			return authTypeStreamingSigned
+		}
 	} else if isRequestSignatureV4(r) {
 		return authTypeSigned
 	} else if isRequestPresignedSignatureV4(r) {
@@ -230,7 +240,7 @@ func checkRequestAuthType(ctx context.Context, r *http.Request, action policy.Ac
 func checkRequestAuthTypeCredential(ctx context.Context, r *http.Request, action policy.Action, bucketName, objectName string) (cred auth.Credentials, owner bool, s3Err APIErrorCode) {
 	globals := mustGlobalsFromContext(ctx)
 	switch getRequestAuthType(r) {
-	case authTypeUnknown, authTypeStreamingSigned:
+	case authTypeUnknown, authTypeStreamingSigned, authTypeStreamingUnsigned:
 		return cred, owner, ErrSignatureVersionNotSupported
 	case authTypePresignedV2, authTypeSignedV2:
 		if s3Err = isReqAuthenticatedV2(r); s3Err != ErrNone {
@@ -412,13 +422,14 @@ func isReqAuthenticated(ctx context.Context, r *http.Request, region string, sty
 
 // List of all support S3 auth types.
 var supportedS3AuthTypes = map[authType]struct{}{
-	authTypeAnonymous:       {},
-	authTypePresigned:       {},
-	authTypePresignedV2:     {},
-	authTypeSigned:          {},
-	authTypeSignedV2:        {},
-	authTypePostPolicy:      {},
-	authTypeStreamingSigned: {},
+	authTypeAnonymous:         {},
+	authTypePresigned:         {},
+	authTypePresignedV2:       {},
+	authTypeSigned:            {},
+	authTypeSignedV2:          {},
+	authTypePostPolicy:        {},
+	authTypeStreamingSigned:   {},
+	authTypeStreamingUnsigned: {},
 }
 
 // Validate if the authType is valid and supported.
@@ -455,7 +466,7 @@ func validateSignature(atype authType, r *http.Request) (auth.Credentials, bool,
 	var owner bool
 	var s3Err APIErrorCode
 	switch atype {
-	case authTypeUnknown, authTypeStreamingSigned:
+	case authTypeUnknown, authTypeStreamingSigned, authTypeStreamingUnsigned:
 		return cred, owner, nil, ErrSignatureVersionNotSupported
 	case authTypeSignedV2, authTypePresignedV2:
 		if s3Err = isReqAuthenticatedV2(r); s3Err != ErrNone {
@@ -570,7 +581,7 @@ func isPutActionAllowed(ctx context.Context, atype authType, bucketName, objectN
 		return ErrSignatureVersionNotSupported
 	case authTypeSignedV2, authTypePresignedV2:
 		cred, owner, s3Err = getReqAccessKeyV2(r)
-	case authTypeStreamingSigned, authTypePresigned, authTypeSigned:
+	case authTypeStreamingSigned, authTypePresigned, authTypeSigned, authTypeStreamingUnsigned:
 		region := globals.ServerRegion
 		cred, owner, s3Err = getReqAccessKeyV4(r, region, serviceS3)
 	}

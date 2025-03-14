@@ -68,7 +68,7 @@ func ExposedValidateRequestSignature(r *http.Request) APIErrorCode {
 		return ErrSignatureVersionNotSupported
 	case authTypePresignedV2, authTypeSignedV2:
 		return isReqAuthenticatedV2(r)
-	case authTypeSigned, authTypePresigned, authTypeStreamingSigned:
+	case authTypeSigned, authTypePresigned, authTypeStreamingSigned, authTypeStreamingUnsigned:
 		globals := mustGlobalsFromContext(r.Context())
 		region := globals.ServerRegion
 		return isReqAuthenticated(r.Context(), r, region, serviceS3)
@@ -107,7 +107,7 @@ func ExposedExtractKeyFromSignature(r *http.Request) (string, APIErrorCode) {
 		} else {
 			return "", ErrSignatureDoesNotMatch
 		}
-	case authTypeSigned, authTypeStreamingSigned:
+	case authTypeSigned, authTypeStreamingSigned, authTypeStreamingUnsigned:
 		if sv, er := parseSignV4(r.Header.Get("Authorization"), region, serviceS3); er != ErrNone {
 			return "", er
 		} else {
