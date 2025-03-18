@@ -1455,7 +1455,7 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	/// if Content-Length is unknown/missing, deny the request
 	size := r.ContentLength
 	rAuthType := getRequestAuthType(r)
-	if rAuthType == authTypeStreamingSigned {
+	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 		if sizeStr, ok := r.Header[xhttp.AmzDecodedContentLength]; ok {
 			if sizeStr[0] == "" {
 				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
@@ -1517,6 +1517,13 @@ func (api objectAPIHandlers) PutObjectHandler(w http.ResponseWriter, r *http.Req
 	case authTypeStreamingSigned:
 		// Initialize stream signature verifier.
 		reader, s3Err = newSignV4ChunkedReader(r)
+		if s3Err != ErrNone {
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
+			return
+		}
+	case authTypeStreamingUnsigned:
+		// Initialize stream signature verifier.
+		reader, s3Err = newUnsignedV4ChunkedReader(r)
 		if s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
 			return
@@ -1768,7 +1775,7 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 	/// if Content-Length is unknown/missing, deny the request
 	size := r.ContentLength
 	rAuthType := getRequestAuthType(r)
-	if rAuthType == authTypeStreamingSigned {
+	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 		if sizeStr, ok := r.Header[xhttp.AmzDecodedContentLength]; ok {
 			if sizeStr[0] == "" {
 				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
@@ -1811,6 +1818,13 @@ func (api objectAPIHandlers) PutObjectExtractHandler(w http.ResponseWriter, r *h
 	case authTypeStreamingSigned:
 		// Initialize stream signature verifier.
 		reader, s3Err = newSignV4ChunkedReader(r)
+		if s3Err != ErrNone {
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
+			return
+		}
+	case authTypeStreamingUnsigned:
+		// Initialize stream signature verifier.
+		reader, s3Err = newUnsignedV4ChunkedReader(r)
 		if s3Err != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Err), r.URL, guessIsBrowserReq(r))
 			return
@@ -2513,7 +2527,7 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 
 	rAuthType := getRequestAuthType(r)
 	// For auth type streaming signature, we need to gather a different content length.
-	if rAuthType == authTypeStreamingSigned {
+	if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 		if sizeStr, ok := r.Header[xhttp.AmzDecodedContentLength]; ok {
 			if sizeStr[0] == "" {
 				writeErrorResponse(ctx, w, errorCodes.ToAPIErr(ErrMissingContentLength), r.URL, guessIsBrowserReq(r))
@@ -2567,6 +2581,13 @@ func (api objectAPIHandlers) PutObjectPartHandler(w http.ResponseWriter, r *http
 	case authTypeStreamingSigned:
 		// Initialize stream signature verifier.
 		reader, s3Error = newSignV4ChunkedReader(r)
+		if s3Error != ErrNone {
+			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
+			return
+		}
+	case authTypeStreamingUnsigned:
+		// Initialize stream signature verifier.
+		reader, s3Error = newUnsignedV4ChunkedReader(r)
 		if s3Error != ErrNone {
 			writeErrorResponse(ctx, w, errorCodes.ToAPIErr(s3Error), r.URL, guessIsBrowserReq(r))
 			return

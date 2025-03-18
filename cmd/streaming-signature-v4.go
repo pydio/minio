@@ -36,10 +36,11 @@ import (
 
 // Streaming AWS Signature Version '4' constants.
 const (
-	emptySHA256              = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	streamingContentSHA256   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-	signV4ChunkedAlgorithm   = "AWS4-HMAC-SHA256-PAYLOAD"
-	streamingContentEncoding = "aws-chunked"
+	emptySHA256                    = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	streamingContentSHA256         = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentSHA256Unsigned = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+	signV4ChunkedAlgorithm         = "AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentEncoding       = "aws-chunked"
 )
 
 // getChunkSignature - get chunk signature.
@@ -62,7 +63,8 @@ func getChunkSignature(cred auth.Credentials, seedSignature string, region strin
 }
 
 // calculateSeedSignature - Calculate seed signature in accordance with
-//     - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
+//   - http://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-streaming.html
+//
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
 func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature string, region string, date time.Time, errCode APIErrorCode) {
@@ -79,10 +81,10 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	}
 
 	// Payload streaming.
-	payload := streamingContentSHA256
+	payload := req.Header.Get(xhttp.AmzContentSha256) // streamingContentSHA256
 
 	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD'
-	if payload != req.Header.Get(xhttp.AmzContentSha256) {
+	if payload != streamingContentSHA256 && payload != streamingContentSHA256Unsigned {
 		return cred, "", "", time.Time{}, ErrContentSHA256Mismatch
 	}
 
@@ -409,7 +411,8 @@ const s3ChunkSignatureStr = ";chunk-signature="
 
 // parses3ChunkExtension removes any s3 specific chunk-extension from buf.
 // For example,
-//     "10000;chunk-signature=..." => "10000", "chunk-signature=..."
+//
+//	"10000;chunk-signature=..." => "10000", "chunk-signature=..."
 func parseS3ChunkExtension(buf []byte) ([]byte, []byte) {
 	buf = trimTrailingWhitespace(buf)
 	semi := bytes.Index(buf, []byte(s3ChunkSignatureStr))
