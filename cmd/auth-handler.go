@@ -79,7 +79,7 @@ func isRequestPostPolicySignatureV4(r *http.Request) bool {
 func isRequestSignStreamingV4(r *http.Request) (ok, unsigned bool) {
 	if r.Method != http.MethodPut {
 		return false, false
-	} else if r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 {
+	} else if r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256 || r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256Trailer {
 		return true, false
 	} else if r.Header.Get(xhttp.AmzContentSha256) == streamingContentSHA256Unsigned {
 		return true, true

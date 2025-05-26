@@ -30,7 +30,7 @@ type s3UnsignedChunkedReader struct {
 
 // newUnsignedV4ChunkedReader creates a new AWS S3 chunked reader
 func newUnsignedV4ChunkedReader(req *http.Request) (io.ReadCloser, APIErrorCode) {
-	cred, seedSignature, region, seedDate, errCode := calculateSeedSignature(req)
+	cred, seedSignature, region, seedDate, _, errCode := calculateSeedSignature(req)
 	if errCode != ErrNone {
 		return nil, errCode
 	}
@@ -80,7 +80,7 @@ func (r *s3UnsignedChunkedReader) Read(p []byte) (n int, err error) {
 
 	// If last chunk (0 size), handle trailer and exit
 	if size == 0 {
-		if err := r.readFinalTrailer(); err != nil {
+		if err := readAndValidateFinalTrailer(r.reader, nil); err != nil {
 			return 0, fmt.Errorf("read final trailer: %w", err)
 		}
 		r.eof = true
@@ -151,7 +151,7 @@ func (r *s3UnsignedChunkedReader) readChunkHeader() (size int, signature string,
 	return int(sizeInt), signature, nil
 }
 
-// readFinalTrailer reads the final signature trailer
+// readAndValidateFinalTrailer reads the final signature trailer
 func (r *s3UnsignedChunkedReader) readFinalTrailer() error {
 	foundContentSha := false
 

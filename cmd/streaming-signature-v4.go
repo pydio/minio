@@ -39,6 +39,7 @@ import (
 const (
 	emptySHA256                    = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 	streamingContentSHA256         = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentSHA256Trailer  = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
 	streamingContentSHA256Unsigned = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
 	signV4ChunkedAlgorithm         = "AWS4-HMAC-SHA256-PAYLOAD"
 	streamingContentEncoding       = "aws-chunked"
@@ -68,7 +69,7 @@ func getChunkSignature(cred auth.Credentials, seedSignature string, region strin
 //
 // returns signature, error otherwise if the signature mismatches or any other
 // error while parsing and validating.
-func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature string, region string, date time.Time, errCode APIErrorCode) {
+func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature string, region string, date time.Time, expectsTrailer bool, errCode APIErrorCode) {
 	// Copy request.
 	req := *r
 
@@ -80,26 +81,30 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	// Parse signature version '4' header.
 	signV4Values, errCode := parseSignV4(v4Auth, globals.ServerRegion, serviceS3)
 	if errCode != ErrNone {
-		return cred, "", "", time.Time{}, errCode
+		return cred, "", "", time.Time{}, false, errCode
 	}
 
 	// Payload streaming.
 	payload := req.Header.Get(xhttp.AmzContentSha256) // streamingContentSHA256
 
-	// Payload for STREAMING signature should be 'STREAMING-AWS4-HMAC-SHA256-PAYLOAD' or UNSIGNED
-	if payload != streamingContentSHA256 && payload != streamingContentSHA256Unsigned {
-		return cred, "", "", time.Time{}, ErrContentSHA256Mismatch
+	// Check supported STREAMING signatures
+	if payload != streamingContentSHA256 &&
+		payload != streamingContentSHA256Unsigned &&
+		payload != streamingContentSHA256Trailer {
+		return cred, "", "", time.Time{}, false, ErrContentSHA256Mismatch
 	}
+
+	expectsTrailer = payload == streamingContentSHA256Trailer
 
 	// Extract all the signed headers along with its values.
 	extractedSignedHeaders, errCode := extractSignedHeaders(signV4Values.SignedHeaders, r)
 	if errCode != ErrNone {
-		return cred, "", "", time.Time{}, errCode
+		return cred, "", "", time.Time{}, false, errCode
 	}
 
 	cred, _, errCode = checkKeyValid(r.Context(), signV4Values.Credential.accessKey)
 	if errCode != ErrNone {
-		return cred, "", "", time.Time{}, errCode
+		return cred, "", "", time.Time{}, false, errCode
 	}
 
 	// Verify if region is valid.
@@ -109,7 +114,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	var dateStr string
 	if dateStr = req.Header.Get("x-amz-date"); dateStr == "" {
 		if dateStr = r.Header.Get("Date"); dateStr == "" {
-			return cred, "", "", time.Time{}, ErrMissingDateHeader
+			return cred, "", "", time.Time{}, false, ErrMissingDateHeader
 		}
 	}
 
@@ -117,7 +122,7 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 	var err error
 	date, err = time.Parse(iso8601Format, dateStr)
 	if err != nil {
-		return cred, "", "", time.Time{}, ErrMalformedDate
+		return cred, "", "", time.Time{}, false, ErrMalformedDate
 	}
 
 	// Query string.
@@ -137,11 +142,11 @@ func calculateSeedSignature(r *http.Request) (cred auth.Credentials, signature s
 
 	// Verify if signature match.
 	if !compareSignatureV4(newSignature, signV4Values.Signature) {
-		return cred, "", "", time.Time{}, ErrSignatureDoesNotMatch
+		return cred, "", "", time.Time{}, false, ErrSignatureDoesNotMatch
 	}
 
 	// Return caculated signature.
-	return cred, newSignature, region, date, ErrNone
+	return cred, newSignature, region, date, expectsTrailer, ErrNone
 }
 
 const maxLineLength = 4 * humanize.KiByte // assumed <= bufio.defaultBufSize 4KiB
@@ -159,12 +164,11 @@ var errMalformedEncoding = errors.New("malformed chunked encoding")
 // NewChunkedReader is not needed by normal applications. The http package
 // automatically decodes chunking when reading response bodies.
 func newSignV4ChunkedReader(req *http.Request) (io.ReadCloser, APIErrorCode) {
-	cred, seedSignature, region, seedDate, errCode := calculateSeedSignature(req)
+	cred, seedSignature, region, seedDate, expectsTrailer, errCode := calculateSeedSignature(req)
 	if errCode != ErrNone {
 		return nil, errCode
 	}
-
-	return &s3ChunkedReader{
+	cReader := &s3ChunkedReader{
 		reader:            bufio.NewReader(req.Body),
 		cred:              cred,
 		seedSignature:     seedSignature,
@@ -172,7 +176,12 @@ func newSignV4ChunkedReader(req *http.Request) (io.ReadCloser, APIErrorCode) {
 		region:            region,
 		chunkSHA256Writer: sha256.New(),
 		buffer:            make([]byte, 64*1024),
-	}, ErrNone
+	}
+
+	if expectsTrailer {
+		cReader.trailerSHA256Writer = sha256.New()
+	}
+	return cReader, ErrNone
 }
 
 // Represents the overall state that is required for decoding a
@@ -184,10 +193,11 @@ type s3ChunkedReader struct {
 	seedDate      time.Time
 	region        string
 
-	chunkSHA256Writer hash.Hash // Calculates sha256 of chunk data.
-	buffer            []byte
-	offset            int
-	err               error
+	chunkSHA256Writer   hash.Hash // Calculates sha256 of chunk data.
+	trailerSHA256Writer hash.Hash // Calculates sha256 of whole data.
+	buffer              []byte
+	offset              int
+	err                 error
 }
 
 func (cr *s3ChunkedReader) Close() (err error) {
@@ -338,6 +348,9 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 	// Once we have read the entire chunk successfully, we verify
 	// that the received signature matches our computed signature.
 	cr.chunkSHA256Writer.Write(cr.buffer)
+	if cr.trailerSHA256Writer != nil {
+		cr.trailerSHA256Writer.Write(cr.buffer)
+	}
 	newSignature := getChunkSignature(cr.cred, cr.seedSignature, cr.region, cr.seedDate, hex.EncodeToString(cr.chunkSHA256Writer.Sum(nil)))
 	if !compareSignatureV4(string(signature[16:]), newSignature) {
 		cr.err = errSignatureMismatch
@@ -349,6 +362,11 @@ func (cr *s3ChunkedReader) Read(buf []byte) (n int, err error) {
 	// If the chunk size is zero we return io.EOF. As specified by AWS,
 	// only the last chunk is zero-sized.
 	if size == 0 {
+		if cr.trailerSHA256Writer != nil {
+			if err := readAndValidateFinalTrailer(cr.reader, cr.trailerSHA256Writer); err != nil {
+				return 0, err
+			}
+		}
 		cr.err = io.EOF
 		return n, cr.err
 	}
