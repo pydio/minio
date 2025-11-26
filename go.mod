@@ -20,7 +20,7 @@ require (
 	github.com/dswarbrick/smart v0.0.0-20190505152634-909a45200d6d
 	github.com/dustin/go-humanize v1.0.1
 	github.com/eclipse/paho.mqtt.golang v1.3.0
-	github.com/fatih/color v1.10.0
+	github.com/fatih/color v1.16.0
 	github.com/fatih/structs v1.1.0
 	github.com/go-ldap/ldap/v3 v3.2.4
 	github.com/go-sql-driver/mysql v1.5.0
@@ -37,8 +37,8 @@ require (
 	github.com/klauspost/readahead v1.3.1
 	github.com/klauspost/reedsolomon v1.9.11
 	github.com/lib/pq v1.9.0
-	github.com/mattn/go-colorable v0.1.8
-	github.com/mattn/go-isatty v0.0.12
+	github.com/mattn/go-colorable v0.1.13
+	github.com/mattn/go-isatty v0.0.20
 	github.com/miekg/dns v1.1.35
 	github.com/minio/cli v1.22.0
 	github.com/minio/highwayhash v1.0.2
@@ -103,9 +103,9 @@ require (
 	github.com/googleapis/go-type-adapters v1.0.0 // indirect
 	github.com/gorilla/websocket v1.4.2 // indirect
 	github.com/hashicorp/errwrap v1.0.0 // indirect
-	github.com/hashicorp/go-cleanhttp v0.5.1 // indirect
+	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-multierror v1.0.0 // indirect
-	github.com/hashicorp/go-retryablehttp v0.5.4 // indirect
+	github.com/hashicorp/go-retryablehttp v0.7.8 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.1 // indirect
 	github.com/hashicorp/go-sockaddr v1.0.2 // indirect
 	github.com/hashicorp/go-uuid v1.0.2 // indirect
